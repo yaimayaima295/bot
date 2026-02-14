@@ -114,7 +114,7 @@ export function ClientDashboardPage() {
   const [subscriptionError, setSubscriptionError] = useState<string | null>(null);
   const [payments, setPayments] = useState<ClientPayment[]>([]);
   const [loading, setLoading] = useState(true);
-  const [paymentMessage, setPaymentMessage] = useState<"success" | "failed" | null>(null);
+  const [paymentMessage, setPaymentMessage] = useState<"success_topup" | "success_tariff" | "success" | "failed" | null>(null);
   const [trialLoading, setTrialLoading] = useState(false);
   const [trialError, setTrialError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -129,8 +129,15 @@ export function ClientDashboardPage() {
   useEffect(() => {
     const payment = searchParams.get("payment");
     const yoomoneyForm = searchParams.get("yoomoney_form");
-    if (payment === "success" || payment === "failed") {
-      setPaymentMessage(payment);
+    const paymentKind = searchParams.get("payment_kind");
+    if (payment === "success") {
+      if (paymentKind === "topup") setPaymentMessage("success_topup");
+      else if (paymentKind === "tariff") setPaymentMessage("success_tariff");
+      else setPaymentMessage("success");
+      setSearchParams({}, { replace: true });
+      if (token) refreshProfile().catch(() => {});
+    } else if (payment === "failed") {
+      setPaymentMessage("failed");
       setSearchParams({}, { replace: true });
       if (token) refreshProfile().catch(() => {});
     } else if (yoomoneyForm === "success") {
@@ -221,9 +228,13 @@ export function ClientDashboardPage() {
   if (isMiniapp) {
     return (
       <div className="w-full min-w-0 overflow-hidden space-y-4">
-        {paymentMessage === "success" && (
+        {(paymentMessage === "success" || paymentMessage === "success_topup" || paymentMessage === "success_tariff") && (
           <div className="rounded-lg bg-green-500/15 border border-green-500/30 px-3 py-2 text-sm font-medium text-green-700 dark:text-green-400">
-            Оплата прошла. Баланс обновлён.
+            {paymentMessage === "success_topup"
+              ? "Оплата прошла успешно. Баланс пополнен."
+              : paymentMessage === "success_tariff"
+                ? "Оплата прошла успешно. Тариф активируется автоматически."
+                : "Оплата прошла успешно. Статус обновляется автоматически."}
           </div>
         )}
         {paymentMessage === "failed" && (
@@ -470,8 +481,14 @@ export function ClientDashboardPage() {
               ? "Ваша подписка активна. Подключитесь к VPN и пользуйтесь интернетом без ограничений."
               : "Подключитесь к VPN — выберите тариф и оплатите картой на сайте или в боте."}
           </p>
-          {paymentMessage === "success" && (
-            <p className="text-sm text-green-600 font-medium">Оплата прошла успешно. Баланс обновлён.</p>
+          {(paymentMessage === "success" || paymentMessage === "success_topup" || paymentMessage === "success_tariff") && (
+            <p className="text-sm text-green-600 font-medium">
+              {paymentMessage === "success_topup"
+                ? "Оплата прошла успешно. Баланс пополнен."
+                : paymentMessage === "success_tariff"
+                  ? "Оплата прошла успешно. Тариф активируется автоматически."
+                  : "Оплата прошла успешно. Статус обновляется автоматически."}
+            </p>
           )}
           {paymentMessage === "failed" && (
             <p className="text-sm text-destructive font-medium">Оплата не прошла. Попробуйте снова или выберите другой способ.</p>

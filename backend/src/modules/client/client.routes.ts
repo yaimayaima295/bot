@@ -925,11 +925,16 @@ clientRouter.post("/payments/platega", async (req, res) => {
     return res.status(400).json({ message: "Метод оплаты недоступен" });
   }
 
-  const appUrl = (config.publicAppUrl || "").replace(/\/$/, "");
-  const returnUrl = appUrl ? `${appUrl}/cabinet/dashboard?payment=success` : "";
-  const failedUrl = appUrl ? `${appUrl}/cabinet/dashboard?payment=failed` : "";
-
   const orderId = randomUUID();
+  const paymentKind = tariffIdToStore ? "tariff" : "topup";
+  const appUrl = (config.publicAppUrl || "").replace(/\/$/, "");
+  const returnUrl = appUrl
+    ? `${appUrl}/cabinet/dashboard?payment=success&payment_kind=${paymentKind}&oid=${orderId}`
+    : "";
+  const failedUrl = appUrl
+    ? `${appUrl}/cabinet/dashboard?payment=failed&payment_kind=${paymentKind}&oid=${orderId}`
+    : "";
+
   const payment = await prisma.payment.create({
     data: {
       clientId,
