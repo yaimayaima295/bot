@@ -38,32 +38,89 @@ let BOT_USERNAME = "";
 
 // ——— Принудительная подписка на канал ———
 
+type SubscriptionCheckState = "subscribed" | "not_subscribed" | "cannot_verify";
+
+type ForceChannelTarget = {
+  chatId: string | null;
+  joinUrl: string | null;
+};
+
+function parseForceChannelTarget(channelInput: string): ForceChannelTarget {
+  const raw = channelInput.trim();
+  if (!raw) return { chatId: null, joinUrl: null };
+
+  const looksLikeUrl = /^https?:\/\//i.test(raw) || /^t\.me\//i.test(raw);
+  if (looksLikeUrl) {
+    const candidate = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    try {
+      const u = new URL(candidate);
+      const hostOk = u.hostname === "t.me" || u.hostname.endsWith(".t.me");
+      const path = u.pathname.replace(/^\/+|\/+$/g, "");
+      if (hostOk && path) {
+        if (path.startsWith("c/")) {
+          const idPart = path.slice(2).split("/")[0];
+          if (/^\d+$/.test(idPart)) {
+            return { chatId: `-100${idPart}`, joinUrl: candidate };
+          }
+        }
+        if (path.startsWith("+") || path.startsWith("joinchat/")) {
+          return { chatId: null, joinUrl: candidate };
+        }
+        const uname = path.split("/")[0];
+        if (/^[a-zA-Z0-9_]{5,}$/.test(uname)) {
+          return { chatId: `@${uname}`, joinUrl: `https://t.me/${uname}` };
+        }
+      }
+    } catch {
+      // fallthrough
+    }
+  }
+
+  if (raw.startsWith("@")) {
+    const uname = raw.slice(1);
+    if (/^[a-zA-Z0-9_]{5,}$/.test(uname)) {
+      return { chatId: `@${uname}`, joinUrl: `https://t.me/${uname}` };
+    }
+  }
+
+  if (/^[a-zA-Z0-9_]{5,}$/.test(raw)) {
+    return { chatId: `@${raw}`, joinUrl: `https://t.me/${raw}` };
+  }
+
+  if (/^-?\d+$/.test(raw)) {
+    const joinUrl = raw.startsWith("-100") ? `https://t.me/c/${raw.slice(4)}` : null;
+    return { chatId: raw, joinUrl };
+  }
+
+  return { chatId: null, joinUrl: null };
+}
+
 /** Проверяет, подписан ли пользователь на указанный канал/группу. */
-async function isUserSubscribed(userId: number, channelId: string): Promise<boolean> {
+async function checkUserSubscription(userId: number, channelInput: string): Promise<{ state: SubscriptionCheckState; target: ForceChannelTarget; error?: string }> {
+  const target = parseForceChannelTarget(channelInput);
+  if (!target.chatId) {
+    return { state: "cannot_verify", target, error: "invalid_channel_id" };
+  }
   try {
-    const member = await bot.api.getChatMember(channelId, userId);
-    // member, administrator, creator — подписан; left, kicked — нет
-    return ["member", "administrator", "creator", "restricted"].includes(member.status);
+    const member = await bot.api.getChatMember(target.chatId, userId);
+    const subscribed = ["member", "administrator", "creator", "restricted"].includes(member.status);
+    return { state: subscribed ? "subscribed" : "not_subscribed", target };
   } catch (e: unknown) {
-    // Если бот не админ в канале или канал не найден — считаем что проверка невозможна, пропускаем
-    console.warn("getChatMember error:", e instanceof Error ? e.message : e);
-    return true; // не блокируем если не можем проверить
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn("getChatMember error:", msg, { channelInput, parsedChatId: target.chatId });
+    return { state: "cannot_verify", target, error: msg };
   }
 }
 
 /** Генерирует клавиатуру «Подписаться + Проверить подписку» */
-function subscribeKeyboard(channelId: string): InlineMarkup {
-  const channelUrl = channelId.startsWith("@")
-    ? `https://t.me/${channelId.slice(1)}`
-    : channelId.startsWith("-100")
-      ? `https://t.me/c/${channelId.slice(4)}`
-      : `https://t.me/${channelId}`;
-  return {
-    inline_keyboard: [
-      [{ text: "📢 Подписаться на канал", url: channelUrl }],
-      [{ text: "✅ Я подписался", callback_data: "check_subscribe" }],
-    ],
-  };
+function subscribeKeyboard(channelInput: string): InlineMarkup {
+  const target = parseForceChannelTarget(channelInput);
+  const rows: InlineMarkup["inline_keyboard"] = [];
+  if (target.joinUrl) {
+    rows.push([{ text: "📢 Подписаться на канал", url: target.joinUrl }]);
+  }
+  rows.push([{ text: "✅ Я подписался", callback_data: "check_subscribe" }]);
+  return { inline_keyboard: rows };
 }
 
 /**
@@ -82,9 +139,16 @@ async function enforceSubscription(
   if (!channelId) return false;
   const userId = ctx.from?.id;
   if (!userId) return false;
-  const subscribed = await isUserSubscribed(userId, channelId);
-  if (subscribed) return false;
+  const result = await checkUserSubscription(userId, channelId);
+  if (result.state === "subscribed") return false;
   const msg = config.forceSubscribeMessage?.trim() || "Для использования бота подпишитесь на наш канал:";
+  if (result.state === "cannot_verify") {
+    await ctx.reply(
+      `⚠️ ${msg}\n\nПроверка подписки сейчас недоступна. Сообщите администратору: бот должен быть администратором канала, а в настройках должен быть указан корректный ID или @username.`,
+      { reply_markup: subscribeKeyboard(channelId) }
+    );
+    return true;
+  }
   await ctx.reply(`⚠️ ${msg}`, { reply_markup: subscribeKeyboard(channelId) });
   return true;
 }
@@ -465,8 +529,20 @@ bot.on("callback_query:data", async (ctx) => {
     if (data === "check_subscribe") {
       const channelId = config?.forceSubscribeChannelId?.trim();
       if (channelId && config?.forceSubscribeEnabled) {
-        const subscribed = await isUserSubscribed(userId, channelId);
-        if (!subscribed) {
+        const result = await checkUserSubscription(userId, channelId);
+        if (result.state === "cannot_verify") {
+          await ctx.answerCallbackQuery({
+            text: "⚠️ Сейчас не удаётся проверить подписку. Сообщите администратору.",
+            show_alert: true,
+          }).catch(() => {});
+          await editMessageContent(
+            ctx,
+            `⚠️ Проверка подписки временно недоступна.\n\nПроверьте настройки: бот должен быть админом в канале, а ID/@username канала должен быть указан корректно.`,
+            subscribeKeyboard(channelId)
+          );
+          return;
+        }
+        if (result.state !== "subscribed") {
           await ctx.answerCallbackQuery({ text: "❌ Вы ещё не подписались на канал", show_alert: true }).catch(() => {});
           return;
         }
@@ -479,10 +555,14 @@ bot.on("callback_query:data", async (ctx) => {
 
     // Проверка подписки на канал для всех действий
     if (config?.forceSubscribeEnabled && config.forceSubscribeChannelId?.trim()) {
-      const subscribed = await isUserSubscribed(userId, config.forceSubscribeChannelId.trim());
-      if (!subscribed) {
+      const channelId = config.forceSubscribeChannelId.trim();
+      const result = await checkUserSubscription(userId, channelId);
+      if (result.state !== "subscribed") {
         const msg = config.forceSubscribeMessage?.trim() || "Для использования бота подпишитесь на наш канал:";
-        await editMessageContent(ctx, `⚠️ ${msg}`, subscribeKeyboard(config.forceSubscribeChannelId.trim()));
+        const details = result.state === "cannot_verify"
+          ? "\n\nПроверка подписки сейчас недоступна. Сообщите администратору."
+          : "";
+        await editMessageContent(ctx, `⚠️ ${msg}${details}`, subscribeKeyboard(channelId));
         return;
       }
     }
@@ -869,6 +949,8 @@ bot.on("message:text", async (ctx) => {
   if (!userId) return;
   const token = getToken(userId);
   if (!token) return;
+  const publicConfig = await api.getPublicConfig().catch(() => null);
+  if (await enforceSubscription(ctx, publicConfig)) return;
 
   // Если пользователь ожидает ввод промокода
   if (awaitingPromoCode.has(userId)) {
@@ -904,7 +986,7 @@ bot.on("message:text", async (ctx) => {
   if (!Number.isFinite(num) || num < 1 || num > 1000000) return;
 
   try {
-    const config = await api.getPublicConfig();
+    const config = publicConfig ?? await api.getPublicConfig();
     const methods = config?.plategaMethods ?? [];
     const yooEnabled = !!config?.yoomoneyEnabled;
     if (!methods.length && !yooEnabled) {
