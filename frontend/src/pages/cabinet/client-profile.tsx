@@ -25,6 +25,8 @@ function formatMoney(amount: number, currency: string) {
   return new Intl.NumberFormat("ru-RU", {
     style: "currency",
     currency: currency.toUpperCase() === "USD" ? "USD" : currency.toUpperCase() === "RUB" ? "RUB" : "UAH",
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
   }).format(amount);
 }
 
@@ -48,6 +50,7 @@ export function ClientProfilePage() {
   const [copiedRef, setCopiedRef] = useState<"site" | "bot" | null>(null);
   const [plategaMethods, setPlategaMethods] = useState<{ id: number; label: string }[]>([]);
   const [yoomoneyEnabled, setYoomoneyEnabled] = useState(false);
+  const [yookassaEnabled, setYookassaEnabled] = useState(false);
   const [activeLanguages, setActiveLanguages] = useState<string[]>([]);
   const [activeCurrencies, setActiveCurrencies] = useState<string[]>([]);
   const [publicAppUrl, setPublicAppUrl] = useState<string | null>(null);
@@ -77,6 +80,7 @@ export function ClientProfilePage() {
     api.getPublicConfig().then((c) => {
       setPlategaMethods(c.plategaMethods ?? []);
       setYoomoneyEnabled(Boolean(c.yoomoneyEnabled));
+      setYookassaEnabled(Boolean(c.yookassaEnabled));
       setActiveLanguages(c.activeLanguages?.length ? c.activeLanguages : ["ru", "en", "ua"]);
       setActiveCurrencies(c.activeCurrencies?.length ? c.activeCurrencies : ["usd", "rub", "uah"]);
       setPublicAppUrl(c.publicAppUrl ?? null);
@@ -86,7 +90,7 @@ export function ClientProfilePage() {
 
   useEffect(() => {
     const params = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
-    if (params.get("yoomoney") === "connected" || params.get("yoomoney_form") === "success") {
+    if (params.get("yoomoney") === "connected" || params.get("yoomoney_form") === "success" || params.get("yookassa") === "success") {
       refreshProfile().catch(() => {});
       window.history.replaceState({}, "", window.location.pathname);
     }
@@ -134,6 +138,26 @@ export function ClientProfilePage() {
       } else {
         navigate("/cabinet/yoomoney-pay", { state: { form: res.form } });
       }
+    } catch (e) {
+      setTopUpError(e instanceof Error ? e.message : "Ошибка создания платежа");
+    } finally {
+      setTopUpLoading(false);
+    }
+  }
+
+  async function startTopUpYookassa() {
+    if (!token || !client) return;
+    const amount = Number(topUpAmount?.replace(",", "."));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setTopUpError("Укажите сумму (в рублях)");
+      return;
+    }
+    setTopUpError(null);
+    setTopUpLoading(true);
+    try {
+      const res = await api.yookassaCreatePayment(token, { amount, currency: "RUB" });
+      setTopUpModalOpen(false);
+      if (res.confirmationUrl) window.location.href = res.confirmationUrl;
     } catch (e) {
       setTopUpError(e instanceof Error ? e.message : "Ошибка создания платежа");
     } finally {
@@ -305,7 +329,7 @@ export function ClientProfilePage() {
         </Card>
       </motion.div>
 
-      {(plategaMethods.length > 0 || yoomoneyEnabled) && (
+      {(plategaMethods.length > 0 || yoomoneyEnabled || yookassaEnabled) && (
         <Card id="topup" className={cardClass}>
           <CardHeader className="min-w-0">
             <CardTitle className="flex items-center gap-2 text-base min-w-0 truncate">
@@ -367,7 +391,7 @@ export function ClientProfilePage() {
             <DialogTitle>Способ оплаты</DialogTitle>
             <DialogDescription>
               Пополнение на {topUpAmount ? `${Number(topUpAmount.replace(",", "."))} ${currency.toUpperCase()}` : "—"}
-              {yoomoneyEnabled && " (для ЮMoney укажите сумму в рублях)"}
+              {(yoomoneyEnabled || yookassaEnabled) && " (ЮMoney и ЮKassa — только рубли)"}
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-2 py-2">
@@ -380,6 +404,17 @@ export function ClientProfilePage() {
               >
                 {topUpLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2 shrink-0" /> : null}
                 ЮMoney — оплата картой
+              </Button>
+            )}
+            {yookassaEnabled && (
+              <Button
+                variant="outline"
+                className="justify-start"
+                disabled={topUpLoading}
+                onClick={() => startTopUpYookassa()}
+              >
+                {topUpLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2 shrink-0" /> : null}
+                ЮKassa — карта / СБП
               </Button>
             )}
             {plategaMethods.map((m) => (

@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Package, Calendar, Wifi, Smartphone, CreditCard, Loader2, Gift, Tag, Check, Wallet } from "lucide-react";
+import { Package, Calendar, Wifi, Smartphone, CreditCard, Loader2, Gift, Tag, Check, Wallet, ChevronDown } from "lucide-react";
 import { useClientAuth } from "@/contexts/client-auth";
 import { api } from "@/lib/api";
 import type { PublicTariffCategory } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Dialog,
   DialogContent,
@@ -15,11 +16,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useCabinetMiniapp } from "@/pages/cabinet/cabinet-layout";
 
 function formatMoney(amount: number, currency: string) {
   return new Intl.NumberFormat("ru-RU", {
     style: "currency",
     currency: currency.toUpperCase() === "USD" ? "USD" : currency.toUpperCase() === "RUB" ? "RUB" : "UAH",
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
   }).format(amount);
 }
 
@@ -33,6 +37,7 @@ export function ClientTariffsPage() {
   const [loading, setLoading] = useState(true);
   const [plategaMethods, setPlategaMethods] = useState<{ id: number; label: string }[]>([]);
   const [yoomoneyEnabled, setYoomoneyEnabled] = useState(false);
+  const [yookassaEnabled, setYookassaEnabled] = useState(false);
   const [trialConfig, setTrialConfig] = useState<{ trialEnabled: boolean; trialDays: number }>({ trialEnabled: false, trialDays: 0 });
   const [payModal, setPayModal] = useState<{ tariff: TariffForPay } | null>(null);
   const [payLoading, setPayLoading] = useState(false);
@@ -48,6 +53,17 @@ export function ClientTariffsPage() {
 
   const showTrial = trialConfig.trialEnabled && !client?.trialUsed;
 
+  const isMobileOrMiniapp = useCabinetMiniapp();
+  const useCollapsibleCategories = tariffs.length > 1 && isMobileOrMiniapp;
+  const [expandedCategoryId, setExpandedCategoryId] = useState<string | null>(null);
+
+  // По умолчанию открыта первая категория (мобильная/мини-апп)
+  useEffect(() => {
+    if (useCollapsibleCategories && tariffs.length > 0) {
+      setExpandedCategoryId((prev) => (prev === null ? tariffs[0].id : prev));
+    }
+  }, [useCollapsibleCategories, tariffs]);
+
   useEffect(() => {
     api.getPublicTariffs().then((r) => {
       setTariffs(r.items ?? []);
@@ -59,6 +75,7 @@ export function ClientTariffsPage() {
     api.getPublicConfig().then((c) => {
       setPlategaMethods(c.plategaMethods ?? []);
       setYoomoneyEnabled(Boolean(c.yoomoneyEnabled));
+      setYookassaEnabled(Boolean(c.yookassaEnabled));
       setTrialConfig({ trialEnabled: !!c.trialEnabled, trialDays: c.trialDays ?? 0 });
     }).catch(() => {});
   }, []);
@@ -190,6 +207,34 @@ export function ClientTariffsPage() {
     }
   }
 
+  /** Оплата тарифа ЮKassa API (карта, СБП и др.). Только RUB. */
+  async function startYookassaPayment(tariff: TariffForPay) {
+    if (!token) return;
+    if (tariff.currency.toUpperCase() !== "RUB") {
+      setPayError("ЮKassa принимает только рубли (RUB).");
+      return;
+    }
+    setPayError(null);
+    setPayLoading(true);
+    try {
+      const amount = promoResult ? getDiscountedPrice(tariff.price) : tariff.price;
+      const res = await api.yookassaCreatePayment(token, {
+        amount,
+        currency: "RUB",
+        tariffId: tariff.id,
+        promoCode: promoResult ? promoInput.trim() : undefined,
+      });
+      setPayModal(null);
+      setPromoInput("");
+      setPromoResult(null);
+      if (res.confirmationUrl) window.location.href = res.confirmationUrl;
+    } catch (e) {
+      setPayError(e instanceof Error ? e.message : "Ошибка создания платежа");
+    } finally {
+      setPayLoading(false);
+    }
+  }
+
   return (
     <div className={`space-y-6 w-full min-w-0 overflow-hidden`}>
       <div className="min-w-0">
@@ -232,6 +277,84 @@ export function ClientTariffsPage() {
             Тарифы пока не опубликованы. Обратитесь в поддержку.
           </CardContent>
         </Card>
+      ) : useCollapsibleCategories ? (
+        <div className="space-y-1">
+          {tariffs.map((cat, catIndex) => (
+            <Collapsible
+              key={cat.id}
+              open={expandedCategoryId === cat.id}
+              onOpenChange={(open) => setExpandedCategoryId(open ? cat.id : null)}
+            >
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.25, delay: catIndex * 0.03 }}
+                className="rounded-xl border bg-card overflow-hidden"
+              >
+                <CollapsibleTrigger asChild>
+                  <button
+                    type="button"
+                    className="w-full flex items-center justify-between gap-3 px-4 py-3.5 text-left hover:bg-muted/50 active:bg-muted transition-colors"
+                  >
+                    <span className="flex items-center gap-2 font-semibold">
+                      <Package className="h-4 w-4 text-primary shrink-0" />
+                      {cat.name}
+                    </span>
+                    <ChevronDown
+                      className={`h-5 w-5 shrink-0 text-muted-foreground transition-transform duration-200 ${expandedCategoryId === cat.id ? "rotate-180" : ""}`}
+                    />
+                  </button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className="px-2 pb-3 pt-1 flex flex-col gap-2">
+                    {cat.tariffs.map((t) => (
+                      <Card key={t.id} className="overflow-hidden">
+                        <CardContent className="flex flex-row items-center gap-3 py-2.5 px-3 min-h-0 min-w-0">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold leading-tight truncate">{t.name}</p>
+                            <div className="flex items-center gap-x-3 gap-y-0 mt-0.5 text-xs text-muted-foreground">
+                              <span className="flex items-center gap-1">
+                                <Calendar className="h-3 w-3 shrink-0 opacity-70" />
+                                {t.durationDays} дн.
+                              </span>
+                              <span className="flex items-center gap-1">
+                                <Wifi className="h-3 w-3 shrink-0 opacity-70" />
+                                {t.trafficLimitBytes != null && t.trafficLimitBytes > 0
+                                  ? `${(t.trafficLimitBytes / 1024 / 1024 / 1024).toFixed(1)} ГБ`
+                                  : "∞"}
+                              </span>
+                              <span className="flex items-center gap-1">
+                                <Smartphone className="h-3 w-3 shrink-0 opacity-70" />
+                                {t.deviceLimit != null && t.deviceLimit > 0 ? `${t.deviceLimit}` : "∞"} устр.
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-sm font-semibold tabular-nums whitespace-nowrap" title={formatMoney(t.price, t.currency)}>
+                              {formatMoney(t.price, t.currency)}
+                            </span>
+                            {token ? (
+                              <Button
+                                size="sm"
+                                className="h-7 px-2.5 text-xs gap-1"
+                                onClick={() => setPayModal({ tariff: { id: t.id, name: t.name, price: t.price, currency: t.currency } })}
+                              >
+                                <CreditCard className="h-3 w-3 shrink-0" />
+                                Оплатить
+                              </Button>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">В боте</span>
+                            )}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                </CollapsibleContent>
+              </motion.div>
+            </Collapsible>
+          ))}
+        </div>
       ) : (
         <div className="space-y-8">
           {tariffs.map((cat, catIndex) => (
@@ -241,50 +364,46 @@ export function ClientTariffsPage() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3, delay: catIndex * 0.05 }}
             >
-              <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                <Package className="h-5 w-5 text-primary" />
+              <h2 className="text-base font-semibold mb-3 flex items-center gap-2">
+                <Package className="h-4 w-4 text-primary shrink-0" />
                 {cat.name}
               </h2>
-              <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="grid gap-3 sm:gap-4 grid-cols-2 lg:grid-cols-4">
                 {cat.tariffs.map((t) => (
-                  <Card key={t.id} className="flex flex-col">
-                    <CardContent className="flex-1 space-y-2 pt-4 pb-4 px-4 sm:pt-6 sm:pb-6 sm:px-6">
-                      <p className="text-base font-semibold">{t.name}</p>
-                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs sm:text-sm text-muted-foreground">
-                        <span className="flex items-center gap-1.5">
-                          <Calendar className="h-3.5 w-3.5 shrink-0" />
+                  <Card key={t.id} className="flex flex-col overflow-hidden">
+                    <CardContent className="flex-1 flex flex-col p-4 min-h-0 min-w-0 overflow-hidden">
+                      <p className="text-sm font-semibold leading-tight line-clamp-2">{t.name}</p>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1">
+                          <Calendar className="h-3 w-3 shrink-0 opacity-70" />
                           {t.durationDays} дн.
                         </span>
-                        <span className="flex items-center gap-1.5">
-                          <Wifi className="h-3.5 w-3.5 shrink-0" />
+                        <span className="flex items-center gap-1">
+                          <Wifi className="h-3 w-3 shrink-0 opacity-70" />
                           {t.trafficLimitBytes != null && t.trafficLimitBytes > 0
                             ? `${(t.trafficLimitBytes / 1024 / 1024 / 1024).toFixed(1)} ГБ`
                             : "∞ трафик"}
                         </span>
-                        <span className="flex items-center gap-1.5">
-                          <Smartphone className="h-3.5 w-3.5 shrink-0" />
-                          {t.deviceLimit != null && t.deviceLimit > 0
-                            ? `${t.deviceLimit} устр.`
-                            : "∞ устр."}
+                        <span className="flex items-center gap-1">
+                          <Smartphone className="h-3 w-3 shrink-0 opacity-70" />
+                          {t.deviceLimit != null && t.deviceLimit > 0 ? `${t.deviceLimit}` : "∞"} устр.
                         </span>
                       </div>
-                      <div className="flex items-center justify-between gap-3 pt-2 border-t">
-                        <p className="text-lg sm:text-xl font-semibold">
+                      <div className="mt-auto pt-3 border-t flex items-center justify-between gap-2 min-h-[2.25rem] min-w-0">
+                        <span className="text-sm sm:text-base font-semibold tabular-nums truncate min-w-0" title={formatMoney(t.price, t.currency)}>
                           {formatMoney(t.price, t.currency)}
-                        </p>
+                        </span>
                         {token ? (
                           <Button
                             size="sm"
-                            className="gap-1.5 shrink-0"
+                            className="h-6 px-2.5 text-xs shrink-0 gap-1"
                             onClick={() => setPayModal({ tariff: { id: t.id, name: t.name, price: t.price, currency: t.currency } })}
                           >
-                            <CreditCard className="h-3.5 w-3.5" />
+                            <CreditCard className="h-3 w-3 shrink-0" />
                             Оплатить
                           </Button>
                         ) : (
-                          <p className="text-xs text-muted-foreground">
-                            Оплатить в боте
-                          </p>
+                          <span className="text-xs text-muted-foreground shrink-0">В боте</span>
                         )}
                       </div>
                     </CardContent>
@@ -374,6 +493,19 @@ export function ClientTariffsPage() {
               >
                 {payLoading ? <Loader2 className="h-4 w-4 animate-spin shrink-0" /> : <CreditCard className="h-4 w-4 shrink-0" />}
                 ЮMoney — оплата картой
+              </Button>
+            )}
+
+            {/* ЮKassa API — карта, СБП и др., только RUB */}
+            {payModal && yookassaEnabled && payModal.tariff.currency.toUpperCase() === "RUB" && (
+              <Button
+                variant="outline"
+                className="justify-start gap-2"
+                disabled={payLoading}
+                onClick={() => startYookassaPayment(payModal.tariff)}
+              >
+                {payLoading ? <Loader2 className="h-4 w-4 animate-spin shrink-0" /> : <CreditCard className="h-4 w-4 shrink-0" />}
+                ЮKassa — карта / СБП
               </Button>
             )}
 

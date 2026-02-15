@@ -45,6 +45,8 @@ function formatMoney(amount: number, currency: string) {
   return new Intl.NumberFormat("ru-RU", {
     style: "currency",
     currency: currency.toUpperCase() === "USD" ? "USD" : currency.toUpperCase() === "RUB" ? "RUB" : "UAH",
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
   }).format(amount);
 }
 
@@ -141,6 +143,9 @@ export function ClientDashboardPage() {
       setSearchParams({}, { replace: true });
       if (token) refreshProfile().catch(() => {});
     } else if (yoomoneyForm === "success") {
+      setSearchParams({}, { replace: true });
+      if (token) refreshProfile().catch(() => {});
+    } else if (searchParams.get("yookassa") === "success") {
       setSearchParams({}, { replace: true });
       if (token) refreshProfile().catch(() => {});
     }

@@ -460,6 +460,14 @@ export const api = {
     return request("/client/yoomoney/process-payment", { method: "POST", body: JSON.stringify(data), token });
   },
 
+  /** ЮKassa API: создание платежа (тариф или пополнение), возвращает confirmationUrl для редиректа. */
+  async yookassaCreatePayment(
+    token: string,
+    data: { amount: number; currency: string; tariffId?: string; promoCode?: string }
+  ): Promise<{ paymentId: string; confirmationUrl: string; yookassaPaymentId: string }> {
+    return request("/client/yookassa/create-payment", { method: "POST", body: JSON.stringify(data), token });
+  },
+
   async clientActivateTrial(token: string): Promise<{ message: string; client: ClientProfile | null }> {
     return request("/client/trial", { method: "POST", token });
   },
@@ -588,6 +596,8 @@ export type UpdateSettingsPayload = {
   yoomoneyClientSecret?: string | null;
   yoomoneyReceiverWallet?: string | null;
   yoomoneyNotificationSecret?: string | null;
+  yookassaShopId?: string | null;
+  yookassaSecretKey?: string | null;
   botButtons?: string | null;
   botEmojis?: Record<string, { unicode?: string; tgEmojiId?: string }> | string | null;
   botBackLabel?: string | null;
@@ -675,6 +685,8 @@ export interface AdminSettings {
   yoomoneyClientSecret?: string | null;
   yoomoneyReceiverWallet?: string | null;
   yoomoneyNotificationSecret?: string | null;
+  yookassaShopId?: string | null;
+  yookassaSecretKey?: string | null;
   /** Кнопки главного меню бота: порядок, видимость, текст, стиль, ключ эмодзи (TRIAL, PACKAGE, …) */
   botButtons?: { id: string; visible: boolean; label: string; order: number; style?: string; emojiKey?: string }[];
   /** Эмодзи по ключам: Unicode и/или TG custom emoji ID (премиум). Ключи: TRIAL, PACKAGE, CARD, LINK, SERVERS, … */
@@ -1002,6 +1014,7 @@ export interface PublicConfig {
   telegramBotUsername?: string | null;
   plategaMethods?: { id: number; label: string }[];
   yoomoneyEnabled?: boolean;
+  yookassaEnabled?: boolean;
   trialEnabled?: boolean;
   trialDays?: number;
   themeAccent?: string;

@@ -47,6 +47,7 @@ const SYSTEM_CONFIG_KEYS = [
   "telegram_bot_token", "telegram_bot_username",
   "platega_merchant_id", "platega_secret", "platega_methods",
   "yoomoney_client_id", "yoomoney_client_secret", "yoomoney_receiver_wallet", "yoomoney_notification_secret",
+  "yookassa_shop_id", "yookassa_secret_key",
   "bot_buttons", "bot_back_label", "bot_menu_texts", "bot_inner_button_styles",
   "bot_emojis", // JSON: { "TRIAL": { "unicode": "🎁", "tgEmojiId": "..." }, "PACKAGE": ... } — эмодзи кнопок/текста, TG ID для премиум
   "category_emojis", // JSON: { "ordinary": "📦", "premium": "⭐" } — эмодзи категорий по коду
@@ -258,6 +259,8 @@ export async function getSystemConfig() {
     yoomoneyClientSecret: map.yoomoney_client_secret || null,
     yoomoneyReceiverWallet: map.yoomoney_receiver_wallet || null,
     yoomoneyNotificationSecret: map.yoomoney_notification_secret || null,
+    yookassaShopId: map.yookassa_shop_id || null,
+    yookassaSecretKey: map.yookassa_secret_key || null,
     botButtons: parseBotButtons(map.bot_buttons),
     botEmojis: parseBotEmojis(map.bot_emojis),
     botBackLabel: (map.bot_back_label || "◀️ В меню").trim() || "◀️ В меню",
@@ -376,6 +379,7 @@ export async function getPublicConfig() {
     telegramBotUsername: full.telegramBotUsername,
     plategaMethods: full.plategaMethods.filter((m) => m.enabled).map((m) => ({ id: m.id, label: m.label })),
     yoomoneyEnabled: Boolean(full.yoomoneyReceiverWallet?.trim()),
+    yookassaEnabled: Boolean(full.yookassaShopId?.trim() && full.yookassaSecretKey?.trim()),
     trialEnabled,
     trialDays,
     botButtons: resolvedButtons,
