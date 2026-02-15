@@ -37,3 +37,6 @@ nginx/ssl/
 
 # Frontend dist
 frontend/dist/
+
+# For Gemini
+output.xml

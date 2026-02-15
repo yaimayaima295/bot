@@ -82,6 +82,38 @@ check_deps() {
   success "Docker Compose $(docker compose version --short 2>/dev/null || echo 'OK')"
 }
 
+# ── Очистка старых данных (НОВОЕ) ─────────────────────────────────
+clean_old_data() {
+  echo ""
+  echo -e "${BOLD}${CYAN}═══ Очистка ═══${NC}"
+  
+  warn "Хотите выполнить чистую установку?"
+  echo -e "  Это действие выполнит:"
+  echo -e "  1. Остановку текущих контейнеров."
+  echo -e "  2. ${RED}Удаление базы данных${NC} (решает проблему с паролем)."
+  echo -e "  3. Удаление старых образов и кеша этого проекта."
+  echo ""
+  
+  read -rp "$(echo -e "${BOLD}Удалить старые данные и БД? [y/N]${NC}: ")" CLEANUP
+  if [[ "$CLEANUP" =~ ^[Yy]$ ]]; then
+    info "Очистка системы..."
+    
+    # 1. Удаляем всё, что относится к docker-compose.yml
+    # -v: удаляет Volumes (базу данных)
+    # --rmi local: удаляет собранные образы
+    # --remove-orphans: удаляет мусорные контейнеры
+    docker compose down -v --rmi local --remove-orphans 2>/dev/null || true
+    
+    # 2. Дополнительно подчищаем неиспользуемые тома (те самые хеши)
+    # prune -f не спрашивает подтверждения
+    docker volume prune -f
+    
+    success "Система полностью очищена. Начинаем с чистого листа."
+  else
+    info "Очистка пропущена. Старая база данных будет сохранена."
+  fi
+}
+
 # ── Интерактивная настройка .env ──────────────────────────────────
 configure_env() {
   echo ""
@@ -374,6 +406,9 @@ main() {
   set -a
   source "$SCRIPT_DIR/.env"
   set +a
+
+  # !!! ДОБАВЛЕННЫЙ ШАГ: Спрашиваем про очистку !!!
+  clean_old_data
 
   # SSL + nginx
   if [ "$USE_BUILTIN_NGINX" = "true" ]; then
