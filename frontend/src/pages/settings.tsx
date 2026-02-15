@@ -12,8 +12,8 @@ import { ACCENT_PALETTES } from "@/contexts/theme";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
-const ALLOWED_LANGS = ["ru", "ua", "en"];
-const ALLOWED_CURRENCIES = ["usd", "uah", "rub"];
+const ALLOWED_LANGS = ["ru", "en"];
+const ALLOWED_CURRENCIES = ["usd", "rub"];
 
 const DEFAULT_PLATEGA_METHODS: { id: number; enabled: boolean; label: string }[] = [
   { id: 2, enabled: true, label: "СПБ" },
@@ -458,7 +458,7 @@ export function SettingsPage() {
                   <Label>Языки</Label>
                   <div className="flex flex-wrap gap-2">
                     {(() => {
-                      const preset = ["ru", "ua", "en"];
+                      const preset = ["ru", "en"];
                       const defaultLang = (settings.defaultLanguage && preset.includes(settings.defaultLanguage) ? settings.defaultLanguage : preset[0]) ?? "";
                       return preset.map((lang) => {
                         const isActive = settings.activeLanguages.includes(lang);
@@ -504,7 +504,7 @@ export function SettingsPage() {
                   <Label>Валюты</Label>
                   <div className="flex flex-wrap gap-2">
                     {(() => {
-                      const preset = ["usd", "uah", "rub"];
+                      const preset = ["usd", "rub"];
                       const defaultCurr = (settings.defaultCurrency && preset.includes(settings.defaultCurrency) ? settings.defaultCurrency : preset[0]) ?? "";
                       return preset.map((curr) => {
                         const isActive = settings.activeCurrencies.includes(curr);

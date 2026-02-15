@@ -224,8 +224,8 @@ export async function getSystemConfig() {
     where: { key: { in: SYSTEM_CONFIG_KEYS } },
   });
   const map = Object.fromEntries(settings.map((s) => [s.key, s.value]));
-  const activeLangs = (map.active_languages || "ru,ua,en").split(",").map((s) => s.trim());
-  const activeCurrs = (map.active_currencies || "usd,uah,rub").split(",").map((s) => s.trim());
+  const activeLangs = (map.active_languages || "ru,en").split(",").map((s) => s.trim());
+  const activeCurrs = (map.active_currencies || "usd,rub").split(",").map((s) => s.trim());
   return {
     activeLanguages: activeLangs,
     activeCurrencies: activeCurrs,

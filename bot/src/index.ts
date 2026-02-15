@@ -771,8 +771,8 @@ bot.on("callback_query:data", async (ctx) => {
 
     if (data === "menu:profile") {
       const client = await api.getMe(token);
-      const langs = config?.activeLanguages?.length ? config.activeLanguages : ["ru", "en", "ua"];
-      const currencies = config?.activeCurrencies?.length ? config.activeCurrencies : ["usd", "rub", "uah"];
+      const langs = config?.activeLanguages?.length ? config.activeLanguages : ["ru", "en"];
+      const currencies = config?.activeCurrencies?.length ? config.activeCurrencies : ["usd", "rub"];
       const { text, entities } = titleWithEmoji(
         "PROFILE",
         `Профиль\n\nБаланс: ${formatMoney(client.balance, client.preferredCurrency)}\nЯзык: ${client.preferredLang}\nВалюта: ${client.preferredCurrency}\n\nИзменить:`,
@@ -783,7 +783,7 @@ bot.on("callback_query:data", async (ctx) => {
     }
 
     if (data === "profile:lang") {
-      const langs = config?.activeLanguages?.length ? config.activeLanguages : ["ru", "en", "ua"];
+      const langs = config?.activeLanguages?.length ? config.activeLanguages : ["ru", "en"];
       await editMessageContent(ctx, "Выберите язык:", langButtons(langs, innerStyles, innerEmojiIds));
       return;
     }
@@ -796,7 +796,7 @@ bot.on("callback_query:data", async (ctx) => {
     }
 
     if (data === "profile:currency") {
-      const currencies = config?.activeCurrencies?.length ? config.activeCurrencies : ["usd", "rub", "uah"];
+      const currencies = config?.activeCurrencies?.length ? config.activeCurrencies : ["usd", "rub"];
       await editMessageContent(ctx, "Выберите валюту:", currencyButtons(currencies, innerStyles, innerEmojiIds));
       return;
     }
