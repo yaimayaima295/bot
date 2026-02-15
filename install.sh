@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ╔══════════════════════════════════════════════════════════════════╗
-# ║          STEALTHNET 3.1 — Автоустановщик                        ║
+# ║          STEALTHNET 3.1.1 — Автоустановщик                        ║
 # ╚══════════════════════════════════════════════════════════════════╝
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -25,7 +25,7 @@ banner() {
   echo "  ╚════██║   ██║   ██╔══╝  ██╔══██║██║     ██║   ██╔══██║"
   echo "  ███████║   ██║   ███████╗██║  ██║███████╗██║   ██║  ██║"
   echo "  ╚══════╝   ╚═╝   ╚══════╝╚═╝  ╚═╝╚══════╝╚═╝   ╚═╝  ╚═╝"
-  echo -e "                         ${YELLOW}v3.1.0${NC}"
+  echo -e "                         ${YELLOW}v3.1.1${NC}"
   echo -e "  ${NC}github.com/STEALTHNET-APP/remnawave-STEALTHNET-Bot${NC}"
   echo ""
 }
@@ -349,7 +349,7 @@ show_status() {
 show_summary() {
   echo ""
   echo -e "${GREEN}${BOLD}╔══════════════════════════════════════════════════════════════════╗${NC}"
-  echo -e "${GREEN}${BOLD}║          STEALTHNET 3.1 — Установка завершена!                  ║${NC}"
+  echo -e "${GREEN}${BOLD}║          STEALTHNET 3.1.1 — Установка завершена!                  ║${NC}"
   echo -e "${GREEN}${BOLD}╚══════════════════════════════════════════════════════════════════╝${NC}"
   echo ""
   echo -e "  ${BOLD}Панель:${NC}      https://$DOMAIN/admin"
@@ -359,7 +359,7 @@ show_summary() {
   if [ -n "$BOT_TOKEN" ]; then
     echo -e "  ${BOLD}Telegram Bot:${NC} запущен"
   else
-    echo -e "  ${YELLOW}Telegram Bot:${NC} не настроен (добавьте BOT_TOKEN в .env)"
+    echo -e "  ${YELLOW}Telegram Bot:${NC} не настроен, добавьте BOT_TOKEN в .env"
   fi
   echo ""
   if [ "$USE_BUILTIN_NGINX" != "true" ]; then
