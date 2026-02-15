@@ -438,7 +438,7 @@ function ClientEditModal({
                   value={editForm.preferredLang ?? ""}
                   onChange={(v) => setEditForm((f) => ({ ...f, preferredLang: v }))}
                   options={(() => {
-                    const langs = activeLanguages.length ? activeLanguages.map((l) => l.trim()) : ["ru", "ua", "en"];
+                    const langs = activeLanguages.length ? activeLanguages.map((l) => l.trim()) : ["ru", "en"];
                     const current = (editForm.preferredLang ?? editing.preferredLang ?? "").trim();
                     const set = new Set(langs);
                     if (current && !set.has(current)) set.add(current);
@@ -452,7 +452,7 @@ function ClientEditModal({
                   value={editForm.preferredCurrency ?? ""}
                   onChange={(v) => setEditForm((f) => ({ ...f, preferredCurrency: v }))}
                   options={(() => {
-                    const currs = activeCurrencies.length ? activeCurrencies.map((c) => c.trim()) : ["usd", "uah", "rub"];
+                    const currs = activeCurrencies.length ? activeCurrencies.map((c) => c.trim()) : ["usd", "rub"];
                     const current = (editForm.preferredCurrency ?? editing.preferredCurrency ?? "").trim();
                     const set = new Set(currs);
                     if (current && !set.has(current)) set.add(current);

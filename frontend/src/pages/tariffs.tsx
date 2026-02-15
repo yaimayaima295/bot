@@ -44,7 +44,6 @@ const BYTES_PER_GB = 1024 * 1024 * 1024;
 const CURRENCIES = [
   { value: "usd", label: "USD" },
   { value: "rub", label: "RUB" },
-  { value: "uah", label: "UAH" },
 ];
 
 function formatTraffic(bytes: number | null): string {

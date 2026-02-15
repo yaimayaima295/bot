@@ -24,7 +24,7 @@ function formatDate(s: string | null) {
 function formatMoney(amount: number, currency: string) {
   return new Intl.NumberFormat("ru-RU", {
     style: "currency",
-    currency: currency.toUpperCase() === "USD" ? "USD" : currency.toUpperCase() === "RUB" ? "RUB" : "UAH",
+    currency: currency.toUpperCase() === "USD" ? "USD" : currency.toUpperCase() === "RUB" ? "RUB" : "USD",
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   }).format(amount);
@@ -81,8 +81,8 @@ export function ClientProfilePage() {
       setPlategaMethods(c.plategaMethods ?? []);
       setYoomoneyEnabled(Boolean(c.yoomoneyEnabled));
       setYookassaEnabled(Boolean(c.yookassaEnabled));
-      setActiveLanguages(c.activeLanguages?.length ? c.activeLanguages : ["ru", "en", "ua"]);
-      setActiveCurrencies(c.activeCurrencies?.length ? c.activeCurrencies : ["usd", "rub", "uah"]);
+      setActiveLanguages(c.activeLanguages?.length ? c.activeLanguages : ["ru", "en"]);
+      setActiveCurrencies(c.activeCurrencies?.length ? c.activeCurrencies : ["usd", "rub"]);
       setPublicAppUrl(c.publicAppUrl ?? null);
       setTelegramBotUsername(c.telegramBotUsername ?? null);
     }).catch(() => {});
@@ -211,8 +211,8 @@ export function ClientProfilePage() {
 
   if (!client) return null;
 
-  const langs = activeLanguages.length ? activeLanguages : ["ru", "en", "ua"];
-  const currencies = activeCurrencies.length ? activeCurrencies : ["usd", "rub", "uah"];
+  const langs = activeLanguages.length ? activeLanguages : ["ru", "en"];
+  const currencies = activeCurrencies.length ? activeCurrencies : ["usd", "rub"];
 
   const isMiniapp = useCabinetMiniapp();
   const cardClass = isMiniapp ? "min-w-0 overflow-hidden" : "";
@@ -300,7 +300,7 @@ export function ClientProfilePage() {
                   onChange={(e) => setPreferredLang(e.target.value)}
                 >
                   {langs.map((l) => (
-                    <option key={l} value={l}>{l === "ru" ? "Русский" : l === "en" ? "English" : "Українська"}</option>
+                    <option key={l} value={l}>{l === "ru" ? "Русский" : l === "en" ? "English" : l.toUpperCase()}</option>
                   ))}
                 </select>
               </div>
