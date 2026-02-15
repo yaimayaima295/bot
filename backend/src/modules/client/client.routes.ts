@@ -18,6 +18,7 @@ import { sendVerificationEmail, isSmtpConfigured } from "../mail/mail.service.js
 import { createPlategaTransaction, isPlategaConfigured } from "../platega/platega.service.js";
 import { activateTariffForClient } from "../tariff/tariff-activation.service.js";
 import { getAuthUrl, exchangeCodeForToken, requestPayment, processPayment } from "../yoomoney/yoomoney.service.js";
+import { createYookassaPayment } from "../yookassa/yookassa.service.js";
 
 /** Извлекает текущий expireAt из ответа Remna. Возвращает Date если в будущем, иначе null. */
 function extractCurrentExpireAt(data: unknown): Date | null {
@@ -1288,6 +1289,89 @@ clientRouter.get("/yoomoney/form-payment/:paymentId", async (req, res) => {
     paymentType,
     successURL,
   });
+});
+
+// ——— ЮKassa API: создание платежа (тариф или пополнение), редирект на confirmation_url ———
+const yookassaCreatePaymentSchema = z.object({
+  amount: z.number().positive().max(1e7),
+  currency: z.string().min(1).max(10),
+  tariffId: z.string().min(1).optional(),
+  promoCode: z.string().optional(),
+});
+clientRouter.post("/yookassa/create-payment", async (req, res) => {
+  try {
+    const clientId = (req as unknown as { clientId: string }).clientId;
+    const parsed = yookassaCreatePaymentSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Укажите сумму и валюту", errors: parsed.error.flatten() });
+    const { amount, currency, tariffId: tariffIdBody, promoCode } = parsed.data;
+    const config = await getSystemConfig();
+    const shopId = config.yookassaShopId?.trim();
+    const secretKey = config.yookassaSecretKey?.trim();
+    if (!shopId || !secretKey) return res.status(503).json({ message: "ЮKassa не настроена" });
+
+    const currencyUpper = currency.toUpperCase();
+    if (currencyUpper !== "RUB") return res.status(400).json({ message: "ЮKassa принимает только рубли (RUB)" });
+
+    let tariffIdToStore: string | null = null;
+    if (tariffIdBody) {
+      const tariff = await prisma.tariff.findUnique({ where: { id: tariffIdBody } });
+      if (!tariff) return res.status(400).json({ message: "Тариф не найден" });
+      tariffIdToStore = tariffIdBody;
+    }
+
+    const client = await prisma.client.findUnique({
+      where: { id: clientId },
+      select: { email: true },
+    });
+    const customerEmail = client?.email?.trim() || null;
+
+    const amountRounded = Math.round(amount * 100) / 100;
+    const orderId = randomUUID();
+    const payment = await prisma.payment.create({
+      data: {
+        clientId,
+        orderId,
+        amount: amountRounded,
+        currency: currencyUpper,
+        status: "PENDING",
+        provider: "yookassa",
+        tariffId: tariffIdToStore,
+        metadata: promoCode ? JSON.stringify({ promoCode }) : null,
+      },
+    });
+
+    const appUrl = (config.publicAppUrl || "").replace(/\/$/, "");
+    const returnUrl = appUrl ? `${appUrl}/cabinet?yookassa=success` : "";
+    const description = tariffIdToStore
+      ? `Тариф STEALTHNET #${orderId}`
+      : `Пополнение баланса STEALTHNET #${orderId}`;
+
+    const result = await createYookassaPayment({
+      shopId,
+      secretKey,
+      amount: amountRounded,
+      currency: currencyUpper,
+      returnUrl,
+      description,
+      metadata: { payment_id: payment.id },
+      customerEmail,
+    });
+
+    if (!result.ok) {
+      await prisma.payment.delete({ where: { id: payment.id } }).catch(() => {});
+      return res.status(500).json({ message: result.error });
+    }
+
+    return res.status(201).json({
+      paymentId: payment.id,
+      confirmationUrl: result.confirmationUrl,
+      yookassaPaymentId: result.paymentId,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[yookassa/create-payment]", message, err);
+    return res.status(500).json({ message: message || "Ошибка создания платежа" });
+  }
 });
 
 clientRouter.get("/payments", async (req, res) => {

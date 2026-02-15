@@ -9,14 +9,7 @@ const envSchema = z.object({
   JWT_ACCESS_EXPIRES_IN: z.string().default("15m"),
   JWT_REFRESH_EXPIRES_IN: z.string().default("7d"),
   REMNA_API_URL: z.preprocess(
-    (s) => {
-      if (typeof s !== "string") return s;
-      const t = s.trim();
-      if (t === "") return undefined;
-      // Допускаем hostname без протокола — дополняем https://
-      if (!/^https?:\/\//i.test(t)) return `https://${t}`;
-      return t;
-    },
+    (s) => (typeof s === "string" && s.trim() === "" ? undefined : s),
     z.string().url().optional()
   ),
   REMNA_ADMIN_TOKEN: z.string().optional(),

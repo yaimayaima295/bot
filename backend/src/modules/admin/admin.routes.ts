@@ -29,7 +29,6 @@ import {
   remnaDisableUser,
   remnaEnableUser,
   remnaResetUserTraffic,
-  remnaBulkUpdateUsersSquads,
   remnaRemoveUsersFromInternalSquad,
   isRemnaConfigured,
 } from "../remna/remna.client.js";
@@ -235,7 +234,7 @@ adminRouter.patch("/payments/:id", asyncRoute(async (req, res) => {
     return res.json({ payment: { ...payment, status: "PAID" }, referral: result });
   }
   const now = new Date();
-  const isTopUp = (payment.provider === "yoomoney_form" || payment.provider === "platega") && !payment.tariffId;
+  const isTopUp = (payment.provider === "yoomoney_form" || payment.provider === "platega" || payment.provider === "yookassa") && !payment.tariffId;
   if (isTopUp) {
     await prisma.$transaction([
       prisma.payment.update({
@@ -844,6 +843,8 @@ const updateSettingsSchema = z.object({
   yoomoneyClientSecret: z.string().max(500).nullable().optional(),
   yoomoneyReceiverWallet: z.string().max(50).nullable().optional(),
   yoomoneyNotificationSecret: z.string().max(500).nullable().optional(),
+  yookassaShopId: z.string().max(200).nullable().optional(),
+  yookassaSecretKey: z.string().max(500).nullable().optional(),
   botButtons: z.string().max(10000).nullable().optional(),
   botEmojis: z.union([z.string().max(15000), z.record(z.object({ unicode: z.string().max(20).optional(), tgEmojiId: z.string().max(50).optional() }))]).nullable().optional(),
   botBackLabel: z.string().max(200).nullable().optional(),
@@ -1057,6 +1058,14 @@ adminRouter.patch("/settings", async (req, res) => {
   if (updates.yoomoneyNotificationSecret !== undefined) {
     const val = updates.yoomoneyNotificationSecret ?? "";
     await prisma.systemSetting.upsert({ where: { key: "yoomoney_notification_secret" }, create: { key: "yoomoney_notification_secret", value: val }, update: { value: val } });
+  }
+  if (updates.yookassaShopId !== undefined) {
+    const val = updates.yookassaShopId ?? "";
+    await prisma.systemSetting.upsert({ where: { key: "yookassa_shop_id" }, create: { key: "yookassa_shop_id", value: val }, update: { value: val } });
+  }
+  if (updates.yookassaSecretKey !== undefined) {
+    const val = updates.yookassaSecretKey ?? "";
+    await prisma.systemSetting.upsert({ where: { key: "yookassa_secret_key" }, create: { key: "yookassa_secret_key", value: val }, update: { value: val } });
   }
   if (updates.botButtons !== undefined) {
     const val = updates.botButtons ?? "";
