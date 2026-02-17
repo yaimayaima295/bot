@@ -333,7 +333,7 @@ export function ClientDashboardPage() {
                 <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
                 {subParsed.status === "EXPIRED" ? "Истекла" : subParsed.status === "DISABLED" ? "Отключена" : "Нет подписки"}
               </span>
-              <p className="text-sm text-muted-foreground">Выберите тариф и оплатите — вклад «Тарифы» внизу.</p>
+              <p className="text-sm text-muted-foreground">Выберите тариф и оплатите — вкладка «Тарифы» внизу.</p>
             </div>
           )}
         </section>
