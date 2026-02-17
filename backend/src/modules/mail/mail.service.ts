@@ -69,3 +69,46 @@ export async function sendVerificationEmail(
     return { ok: false, error: message };
   }
 }
+
+export type EmailAttachment = { filename: string; content: Buffer };
+
+/**
+ * Отправить произвольное письмо (для рассылки). Опционально — вложения.
+ */
+export async function sendEmail(
+  config: SmtpConfig,
+  to: string,
+  subject: string,
+  html: string,
+  attachments?: EmailAttachment[]
+): Promise<{ ok: boolean; error?: string }> {
+  if (!isSmtpConfigured(config)) {
+    return { ok: false, error: "SMTP not configured" };
+  }
+
+  const auth = config.user && config.password ? { user: config.user, pass: config.password } : undefined;
+  const transporter = nodemailer.createTransport({
+    host: config.host,
+    port: config.port,
+    secure: config.secure,
+    auth,
+  });
+
+  const from = config.fromName
+    ? `"${config.fromName}" <${config.fromEmail}>`
+    : config.fromEmail!;
+
+  try {
+    await transporter.sendMail({
+      from,
+      to,
+      subject,
+      html,
+      ...(attachments?.length ? { attachments: attachments.map((a) => ({ filename: a.filename, content: a.content })) } : {}),
+    });
+    return { ok: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: message };
+  }
+}

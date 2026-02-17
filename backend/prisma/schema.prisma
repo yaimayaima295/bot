@@ -14,6 +14,7 @@ model Admin {
   passwordHash      String   @map("password_hash")
   mustChangePassword Boolean @default(true) @map("must_change_password")
   role              String   @default("ADMIN")
+  allowedSections   String?  @map("allowed_sections") @db.Text
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
   refreshTokens     RefreshToken[]
@@ -62,6 +63,11 @@ model Client {
   referralPercent  Float?   @map("referral_percent")
   trialUsed        Boolean   @default(false) @map("trial_used")
   yoomoneyAccessToken String? @map("yoomoney_access_token")
+  utmSource        String?   @map("utm_source")
+  utmMedium        String?   @map("utm_medium")
+  utmCampaign      String?   @map("utm_campaign")
+  utmContent       String?   @map("utm_content")
+  utmTerm          String?   @map("utm_term")
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
 
@@ -71,9 +77,11 @@ model Client {
   referralCredits ReferralCredit[]
   promoActivations PromoActivation[]
   promoCodeUsages  PromoCodeUsage[]
+  autoBroadcastLogs AutoBroadcastLog[]
 
   @@index([telegramId])
   @@index([email])
+  @@index([utmSource])
   @@map("clients")
 }
 
@@ -85,6 +93,11 @@ model PendingEmailRegistration {
   preferredLang    String   @default("ru") @map("preferred_lang")
   preferredCurrency String  @default("usd") @map("preferred_currency")
   referralCode     String?  @map("referral_code")
+  utmSource        String?  @map("utm_source")
+  utmMedium        String?  @map("utm_medium")
+  utmCampaign      String?  @map("utm_campaign")
+  utmContent       String?  @map("utm_content")
+  utmTerm          String?  @map("utm_term")
   verificationToken String @unique @map("verification_token")
   expiresAt        DateTime @map("expires_at")
   createdAt        DateTime @default(now()) @map("created_at")
@@ -226,11 +239,12 @@ model TariffCategory {
   @@map("tariff_categories")
 }
 
-// Тариф внутри категории: название, срок, сквады, лимиты, цена
+// Тариф внутри категории: название, описание (опционально), срок, сквады, лимиты, цена
 model Tariff {
   id                 String   @id @default(cuid())
   categoryId         String   @map("category_id")
   name               String
+  description        String?  @db.Text
   durationDays       Int      @map("duration_days")
   internalSquadUuids String[] @map("internal_squad_uuids")
   trafficLimitBytes  BigInt?  @map("traffic_limit_bytes")
@@ -246,4 +260,37 @@ model Tariff {
 
   @@index([categoryId])
   @@map("tariffs")
+}
+
+// ——— Авто-рассылка (настраиваемые правила для удержания клиентов) ———
+model AutoBroadcastRule {
+  id           String   @id @default(cuid())
+  name         String   @map("name")           // Название правила для админки
+  triggerType  String   @map("trigger_type")    // after_registration | inactivity | no_payment | trial_not_connected | trial_used_never_paid | no_traffic | subscription_expired
+  delayDays    Int      @map("delay_days")      // Дней после триггера (для after_registration / no_payment) или без платежа (inactivity)
+  channel      String   @map("channel")         // telegram | email | both
+  subject      String?  @map("subject")         // Тема письма (для email)
+  message      String   @db.Text                // Текст (до 4096)
+  enabled      Boolean  @default(true) @map("enabled")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  logs AutoBroadcastLog[]
+
+  @@map("auto_broadcast_rules")
+}
+
+model AutoBroadcastLog {
+  id        String   @id @default(cuid())
+  ruleId    String   @map("rule_id")
+  clientId  String   @map("client_id")
+  sentAt    DateTime @default(now()) @map("sent_at")
+
+  rule   AutoBroadcastRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  client Client             @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@unique([ruleId, clientId])
+  @@index([ruleId])
+  @@index([clientId])
+  @@map("auto_broadcast_logs")
 }

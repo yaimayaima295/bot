@@ -53,9 +53,16 @@ function formatNodeCpuRam(cpuCount: number | null | undefined, totalRam: string 
   return `${cpu} / ${ram}`;
 }
 
+function canAccessRemnaNodes(role: string, allowedSections: string[] | undefined): boolean {
+  if (role === "ADMIN") return true;
+  return Array.isArray(allowedSections) && allowedSections.includes("remna-nodes");
+}
+
 export function DashboardPage() {
   const { state } = useAuth();
   const token = state.accessToken ?? null;
+  const admin = state.admin;
+  const hasRemnaNodesAccess = admin ? canAccessRemnaNodes(admin.role, admin.allowedSections) : false;
 
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [nodes, setNodes] = useState<RemnaNode[]>([]);
@@ -65,7 +72,7 @@ export function DashboardPage() {
   const [nodeActionUuid, setNodeActionUuid] = useState<string | null>(null);
 
   const refetchNodes = async () => {
-    if (!token) return;
+    if (!token || !hasRemnaNodesAccess) return;
     const data = (await api.getRemnaNodes(token).catch(() => ({ response: [] }))) as RemnaNodesResponse;
     setNodes(Array.isArray(data?.response) ? data.response : []);
   };
@@ -74,7 +81,7 @@ export function DashboardPage() {
     nodeUuid: string,
     action: "enable" | "disable" | "restart"
   ) => {
-    if (!token) return;
+    if (!token || !hasRemnaNodesAccess) return;
     setNodeActionUuid(nodeUuid);
     try {
       if (action === "enable") await api.remnaNodeEnable(token, nodeUuid);
@@ -97,15 +104,20 @@ export function DashboardPage() {
       setLoading(true);
       setError(null);
       try {
-        const [statsRes, nodesRes, settingsRes] = await Promise.all([
-          api.getDashboardStats(token!),
-          api.getRemnaNodes(token!).catch(() => ({ response: [] })),
-          api.getSettings(token!).catch(() => null),
-        ]);
+        const statsP = api.getDashboardStats(token!);
+        const nodesP = hasRemnaNodesAccess
+          ? api.getRemnaNodes(token!).catch(() => ({ response: [] }))
+          : Promise.resolve(null);
+        const settingsP = api.getSettings(token!).catch(() => null);
+        const [statsRes, nodesRes, settingsRes] = await Promise.all([statsP, nodesP, settingsP]);
         if (cancelled) return;
         setStats(statsRes);
-        const data = nodesRes as RemnaNodesResponse;
-        setNodes(Array.isArray(data?.response) ? data.response : []);
+        if (nodesRes != null) {
+          const data = nodesRes as RemnaNodesResponse;
+          setNodes(Array.isArray(data?.response) ? data.response : []);
+        } else {
+          setNodes([]);
+        }
         const curr = settingsRes?.defaultCurrency;
         setDefaultCurrency(curr ? String(curr).toUpperCase() : "USD");
       } catch (e) {
@@ -121,7 +133,7 @@ export function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [token, hasRemnaNodesAccess]);
 
   if (loading && !stats) {
     return (
@@ -137,6 +149,12 @@ export function DashboardPage() {
         <h1 className="text-3xl font-bold tracking-tight">Дашборд</h1>
         <p className="text-muted-foreground">Статистика пользователей, продажи, аналитика, ноды Remna</p>
       </div>
+
+      {admin?.role === "MANAGER" && (!admin.allowedSections || admin.allowedSections.length === 0) && (
+        <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-4 py-2 text-sm text-amber-700 dark:text-amber-400">
+          У вас нет доступа ни к одному разделу. Обратитесь к администратору.
+        </div>
+      )}
 
       {error && (
         <div className="rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-2 text-sm text-destructive">
@@ -208,9 +226,9 @@ export function DashboardPage() {
           <CardContent>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <div>
-                <p className="text-sm text-muted-foreground">Всего выручка</p>
+                <p className="text-sm text-muted-foreground">Всего поступления</p>
                 <p className="text-xl font-semibold">{stats ? formatMoney(stats.sales.totalAmount, defaultCurrency) : "—"}</p>
-                <p className="text-xs text-muted-foreground">{stats?.sales.totalCount ?? 0} оплаченных платежей</p>
+                <p className="text-xs text-muted-foreground">{stats?.sales.totalCount ?? 0} платежей с платёжек (без оплаты с баланса)</p>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">За 7 дней</p>
@@ -272,7 +290,11 @@ export function DashboardPage() {
             </p>
           </CardHeader>
           <CardContent>
-            {nodes.length === 0 ? (
+            {!hasRemnaNodesAccess ? (
+              <p className="text-muted-foreground text-sm py-4">
+                Нет доступа к управлению нодами Remna. Обратитесь к администратору для получения раздела «Ноды Remna».
+              </p>
+            ) : nodes.length === 0 ? (
               <p className="text-muted-foreground text-sm py-4">
                 Ноды не загружены или Remna API не настроен. Проверьте настройки и подключение к Remna.
               </p>

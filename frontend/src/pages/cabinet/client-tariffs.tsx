@@ -312,6 +312,9 @@ export function ClientTariffsPage() {
                         <CardContent className="flex flex-row items-center gap-3 py-2.5 px-3 min-h-0 min-w-0">
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-semibold leading-tight truncate">{t.name}</p>
+                            {t.description?.trim() ? (
+                              <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{t.description}</p>
+                            ) : null}
                             <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0 text-xs text-muted-foreground">
                               <span className="flex items-center gap-1">
                                 <Calendar className="h-3 w-3 shrink-0 opacity-70" />
@@ -371,6 +374,9 @@ export function ClientTariffsPage() {
                   <Card key={t.id} className="flex flex-col overflow-hidden">
                     <CardContent className="flex-1 flex flex-col p-4 min-h-0 min-w-0 overflow-hidden">
                       <p className="text-sm font-semibold leading-tight line-clamp-2">{t.name}</p>
+                      {t.description?.trim() ? (
+                        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{t.description}</p>
+                      ) : null}
                       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
                         <span className="flex items-center gap-1">
                           <Calendar className="h-3 w-3 shrink-0 opacity-70" />

@@ -3,7 +3,7 @@
  */
 
 import { prisma } from "../../db.js";
-import { remnaGetUser, remnaUpdateUser, remnaAddUsersToInternalSquad, isRemnaConfigured } from "../remna/remna.client.js";
+import { remnaGetUser, remnaUpdateUser, isRemnaConfigured } from "../remna/remna.client.js";
 
 export type ApplyExtraOptionResult = { ok: true } | { ok: false; error: string; status: number };
 
@@ -139,9 +139,7 @@ export async function applyExtraOptionByPaymentId(paymentId: string): Promise<Ap
     if (updateRes.error) {
       return { ok: false, error: updateRes.error, status: updateRes.status >= 400 ? updateRes.status : 500 };
     }
-    if (!currentSquads.includes(option.squadUuid)) {
-      await remnaAddUsersToInternalSquad(option.squadUuid, { userUuids: [uuid] }).catch(() => {});
-    }
+    // Не вызываем add-users: по api-1.yaml эндпоинт добавляет ВСЕХ пользователей в сквад; назначение уже в remnaUpdateUser(activeInternalSquads).
     return { ok: true };
   }
 

@@ -77,6 +77,11 @@ export async function registerByTelegram(body: {
   preferredLang?: string;
   preferredCurrency?: string;
   referralCode?: string;
+  utm_source?: string;
+  utm_medium?: string;
+  utm_campaign?: string;
+  utm_content?: string;
+  utm_term?: string;
 }): Promise<{ token: string; client: { id: string; telegramUsername?: string | null; preferredCurrency: string; balance: number; trialUsed?: boolean; referralCode?: string | null } }> {
   return fetchJson("/api/client/auth/register", { method: "POST", body });
 }

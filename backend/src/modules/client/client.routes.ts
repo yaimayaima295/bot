@@ -16,7 +16,7 @@ import {
   type SellOptionServerProduct,
 } from "./client.service.js";
 import { requireClientAuth } from "./client.middleware.js";
-import { remnaCreateUser, remnaUpdateUser, remnaAddUsersToInternalSquad, isRemnaConfigured, remnaGetUser, remnaGetUserByUsername, remnaGetUserByEmail, remnaGetUserByTelegramId, extractRemnaUuid } from "../remna/remna.client.js";
+import { remnaCreateUser, remnaUpdateUser, isRemnaConfigured, remnaGetUser, remnaGetUserByUsername, remnaGetUserByEmail, remnaGetUserByTelegramId, extractRemnaUuid } from "../remna/remna.client.js";
 import { sendVerificationEmail, isSmtpConfigured } from "../mail/mail.service.js";
 import { createPlategaTransaction, isPlategaConfigured } from "../platega/platega.service.js";
 import { activateTariffForClient } from "../tariff/tariff-activation.service.js";
@@ -48,6 +48,14 @@ function calculateExpireAt(currentExpireAt: Date | null, durationDays: number): 
 
 export const clientAuthRouter = Router();
 
+const utmSchema = {
+  utm_source: z.string().max(255).optional(),
+  utm_medium: z.string().max(255).optional(),
+  utm_campaign: z.string().max(255).optional(),
+  utm_content: z.string().max(255).optional(),
+  utm_term: z.string().max(255).optional(),
+};
+
 const registerSchema = z.object({
   email: z.string().email().optional(),
   password: z.string().min(8).optional(),
@@ -56,6 +64,7 @@ const registerSchema = z.object({
   preferredLang: z.string().max(5).default("ru"),
   preferredCurrency: z.string().max(5).default("usd"),
   referralCode: z.string().optional(),
+  ...utmSchema,
 });
 
 clientAuthRouter.post("/register", async (req, res) => {
@@ -114,6 +123,11 @@ clientAuthRouter.post("/register", async (req, res) => {
         preferredLang: data.preferredLang,
         preferredCurrency: data.preferredCurrency,
         referralCode: data.referralCode || null,
+        utmSource: data.utm_source ?? null,
+        utmMedium: data.utm_medium ?? null,
+        utmCampaign: data.utm_campaign ?? null,
+        utmContent: data.utm_content ?? null,
+        utmTerm: data.utm_term ?? null,
         verificationToken,
         expiresAt,
       },
@@ -143,29 +157,7 @@ clientAuthRouter.post("/register", async (req, res) => {
     }
   }
 
-  let remnawaveUuid: string | null = null;
-  if (isRemnaConfigured()) {
-    const rawName = data.email?.split("@")[0] || `tg${data.telegramId}`;
-    const username = rawName.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 36) || "user_" + Date.now().toString(36);
-    // Пользователь без активной подписки — доступ после триала или оплаты
-    const remnaBody: Record<string, unknown> = {
-      username: username.length >= 3 ? username : "u_" + username,
-      trafficLimitBytes: 0,
-      trafficLimitStrategy: "NO_RESET",
-      expireAt: new Date(Date.now() - 1000).toISOString(),
-    };
-    if (data.telegramId) {
-      const tid = parseInt(data.telegramId, 10);
-      if (!Number.isNaN(tid)) remnaBody.telegramId = tid;
-    }
-    const remnaRes = await remnaCreateUser(remnaBody);
-    remnawaveUuid = extractRemnaUuid(remnaRes.data);
-    if (remnaRes.error || remnawaveUuid == null) {
-      console.error("[Remna] create user failed:", { error: remnaRes.error, status: remnaRes.status, data: remnaRes.data });
-      return res.status(503).json({ message: "Сервис временно недоступен. Не удалось создать учётную запись VPN. Попробуйте позже." });
-    }
-  }
-
+  // Не создаём пользователя в Remna при регистрации — клиент неактивен до триала или оплаты тарифа.
   const referralCode = generateReferralCode();
   let referrerId: string | null = null;
   if (data.referralCode) {
@@ -178,13 +170,18 @@ clientAuthRouter.post("/register", async (req, res) => {
     data: {
       email: data.email ?? null,
       passwordHash,
-      remnawaveUuid,
+      remnawaveUuid: null,
       referralCode,
       referrerId,
       preferredLang: data.preferredLang,
       preferredCurrency: data.preferredCurrency,
       telegramId: data.telegramId ?? null,
       telegramUsername: data.telegramUsername ?? null,
+      utmSource: data.utm_source ?? null,
+      utmMedium: data.utm_medium ?? null,
+      utmCampaign: data.utm_campaign ?? null,
+      utmContent: data.utm_content ?? null,
+      utmTerm: data.utm_term ?? null,
     },
   });
 
@@ -214,22 +211,7 @@ clientAuthRouter.post("/verify-email", async (req, res) => {
     return res.json({ token: signToken, client: toClientShape(existingClient) });
   }
 
-  let remnawaveUuid: string | null = null;
-  if (isRemnaConfigured()) {
-    const username = pending.email.split("@")[0].replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 36) || "u_" + Date.now().toString(36);
-    const remnaRes = await remnaCreateUser({
-      username: username.length >= 3 ? username : "u_" + username,
-      trafficLimitBytes: 0,
-      trafficLimitStrategy: "NO_RESET",
-      expireAt: new Date(Date.now() - 1000).toISOString(),
-    });
-    remnawaveUuid = extractRemnaUuid(remnaRes.data);
-    if (remnaRes.error || remnawaveUuid == null) {
-      console.error("[Remna] create user (verify-email) failed:", { error: remnaRes.error, status: remnaRes.status, data: remnaRes.data });
-      return res.status(503).json({ message: "Сервис временно недоступен. Не удалось создать учётную запись VPN. Попробуйте позже." });
-    }
-  }
-
+  // Не создаём пользователя в Remna при регистрации — клиент неактивен до триала или оплаты тарифа.
   const referralCode = generateReferralCode();
   let referrerId: string | null = null;
   if (pending.referralCode) {
@@ -241,13 +223,18 @@ clientAuthRouter.post("/verify-email", async (req, res) => {
     data: {
       email: pending.email,
       passwordHash: pending.passwordHash,
-      remnawaveUuid,
+      remnawaveUuid: null,
       referralCode,
       referrerId,
       preferredLang: pending.preferredLang,
       preferredCurrency: pending.preferredCurrency,
       telegramId: null,
       telegramUsername: null,
+      utmSource: pending.utmSource,
+      utmMedium: pending.utmMedium,
+      utmCampaign: pending.utmCampaign,
+      utmContent: pending.utmContent,
+      utmTerm: pending.utmTerm,
     },
   });
 
@@ -566,7 +553,7 @@ clientRouter.post("/trial", async (req, res) => {
     if (updateRes.error) {
       return res.status(updateRes.status >= 400 ? updateRes.status : 500).json({ message: updateRes.error });
     }
-    await remnaAddUsersToInternalSquad(trialSquadUuid, { userUuids: [client.remnawaveUuid] }).catch(() => {});
+    // Не вызываем add-users: по api-1.yaml эндпоинт добавляет ВСЕХ пользователей в сквад; назначение уже сделано через remnaUpdateUser(activeInternalSquads).
   } else {
     // Сначала ищем существующего пользователя в Remna (по Telegram ID, email, username), чтобы не получать "username already exists"
     let existingUuid: string | null = null;
@@ -618,7 +605,7 @@ clientRouter.post("/trial", async (req, res) => {
       hwidDeviceLimit,
       activeInternalSquads: [trialSquadUuid],
     });
-    await remnaAddUsersToInternalSquad(trialSquadUuid, { userUuids: [existingUuid] }).catch(() => {});
+    // Не вызываем add-users: по api-1.yaml эндпоинт добавляет ВСЕХ пользователей в сквад.
     await prisma.client.update({
       where: { id: client.id },
       data: { remnawaveUuid: existingUuid, trialUsed: true },
@@ -677,7 +664,7 @@ clientRouter.post("/promo/activate", async (req, res) => {
     if (updateRes.error) {
       return res.status(updateRes.status >= 400 ? updateRes.status : 500).json({ message: updateRes.error });
     }
-    await remnaAddUsersToInternalSquad(group.squadUuid, { userUuids: [client.remnawaveUuid] }).catch((e) => console.warn("[Remna] add-users to squad (promo group):", e));
+    // Не вызываем add-users: по api-1.yaml эндпоинт добавляет ВСЕХ пользователей в сквад.
   } else {
     // Ищем существующего пользователя или создаём нового
     let existingUuid: string | null = null;
@@ -710,7 +697,7 @@ clientRouter.post("/promo/activate", async (req, res) => {
     if (!existingUuid) return res.status(502).json({ message: "Ошибка создания пользователя VPN" });
 
     await remnaUpdateUser({ uuid: existingUuid, expireAt, trafficLimitBytes, hwidDeviceLimit, activeInternalSquads: [group.squadUuid] });
-    await remnaAddUsersToInternalSquad(group.squadUuid, { userUuids: [existingUuid] }).catch((e) => console.warn("[Remna] add-users to squad (promo group new):", e));
+    // Не вызываем add-users: по api-1.yaml эндпоинт добавляет ВСЕХ пользователей в сквад.
 
     await prisma.client.update({
       where: { id: client.id },
@@ -815,7 +802,7 @@ clientRouter.post("/promo-code/activate", async (req, res) => {
     if (updateRes.error) {
       return res.status(updateRes.status >= 400 ? updateRes.status : 500).json({ message: updateRes.error });
     }
-    await remnaAddUsersToInternalSquad(promo.squadUuid, { userUuids: [client.remnawaveUuid] }).catch((e) => console.warn("[Remna] add-users to squad (promo-code):", e));
+    // Не вызываем add-users: по api-1.yaml эндпоинт добавляет ВСЕХ пользователей в сквад.
   } else {
     let existingUuid: string | null = null;
     let currentExpireAt: Date | null = null;
@@ -847,7 +834,7 @@ clientRouter.post("/promo-code/activate", async (req, res) => {
     if (!existingUuid) return res.status(502).json({ message: "Ошибка создания пользователя VPN" });
 
     await remnaUpdateUser({ uuid: existingUuid, expireAt, trafficLimitBytes, hwidDeviceLimit, activeInternalSquads: [promo.squadUuid] });
-    await remnaAddUsersToInternalSquad(promo.squadUuid, { userUuids: [existingUuid] }).catch((e) => console.warn("[Remna] add-users to squad (promo-code new):", e));
+    // Не вызываем add-users: по api-1.yaml эндпоинт добавляет ВСЕХ пользователей в сквад.
     await prisma.client.update({ where: { id: client.id }, data: { remnawaveUuid: existingUuid } });
   }
 
@@ -1693,10 +1680,11 @@ publicConfigRouter.get("/subscription-page", async (_req, res) => {
   }
 });
 
-function tariffToJson(t: { id: string; name: string; durationDays: number; internalSquadUuids: string[]; trafficLimitBytes: bigint | null; deviceLimit: number | null; price: number; currency: string }) {
+function tariffToJson(t: { id: string; name: string; description: string | null; durationDays: number; internalSquadUuids: string[]; trafficLimitBytes: bigint | null; deviceLimit: number | null; price: number; currency: string }) {
   return {
     id: t.id,
     name: t.name,
+    description: t.description ?? null,
     durationDays: t.durationDays,
     trafficLimitBytes: t.trafficLimitBytes != null ? Number(t.trafficLimitBytes) : null,
     deviceLimit: t.deviceLimit,

@@ -59,6 +59,8 @@ const SYSTEM_CONFIG_KEYS = [
   "sell_options_enabled", "sell_options_traffic_enabled", "sell_options_traffic_products",
   "sell_options_devices_enabled", "sell_options_devices_products",
   "sell_options_servers_enabled", "sell_options_servers_products",
+  "google_analytics_id", "yandex_metrika_id", // Маркетинг: счётчики для кабинета
+  "auto_broadcast_cron", // Расписание авто-рассылки (cron, например "0 9 * * *" = 9:00 каждый день)
 ];
 
 /** Продукт «Доп. трафик»: объём в ГБ, цена, валюта */
@@ -295,6 +297,9 @@ export async function getSystemConfig() {
     sellOptionsDevicesProducts: parseSellOptionDeviceProducts(map.sell_options_devices_products),
     sellOptionsServersEnabled: map.sell_options_servers_enabled === "true" || map.sell_options_servers_enabled === "1",
     sellOptionsServersProducts: parseSellOptionServerProducts(map.sell_options_servers_products),
+    googleAnalyticsId: (map.google_analytics_id ?? "").trim() || null,
+    yandexMetrikaId: (map.yandex_metrika_id ?? "").trim() || null,
+    autoBroadcastCron: (map.auto_broadcast_cron ?? "").trim() || null,
   };
 }
 
@@ -478,6 +483,8 @@ export async function getPublicConfig() {
     offerLink: full.offerLink ?? null,
     instructionsLink: full.instructionsLink ?? null,
     themeAccent: full.themeAccent ?? "default",
+    googleAnalyticsId: full.googleAnalyticsId ?? null,
+    yandexMetrikaId: full.yandexMetrikaId ?? null,
     forceSubscribeEnabled: full.forceSubscribeEnabled ?? false,
     forceSubscribeChannelId: full.forceSubscribeChannelId ?? null,
     forceSubscribeMessage: full.forceSubscribeMessage ?? null,

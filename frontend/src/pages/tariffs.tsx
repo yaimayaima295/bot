@@ -212,6 +212,11 @@ function SortableTariffRow({
           <CreditCard className="h-4 w-4" />
         </span>
         <span className="font-medium">{t.name}</span>
+        {t.description?.trim() ? (
+          <span className="text-muted-foreground text-sm max-w-[200px] truncate" title={t.description}>
+            {t.description}
+          </span>
+        ) : null}
         <span className="text-muted-foreground text-sm">{t.durationDays} дн.</span>
         <span className="font-semibold text-primary">
           {formatPrice(t.price ?? 0, t.currency ?? "usd")}
@@ -592,6 +597,7 @@ function TariffModal({
   const categoryId = isEdit ? modal.category.id : modal.categoryId;
 
   const [name, setName] = useState(tariff?.name ?? "");
+  const [description, setDescription] = useState(tariff?.description ?? "");
   const [durationDays, setDurationDays] = useState(tariff?.durationDays ?? 30);
   const [selectedSquadUuids, setSelectedSquadUuids] = useState<string[]>(tariff?.internalSquadUuids ?? []);
   const [trafficGb, setTrafficGb] = useState<string>(
@@ -604,6 +610,7 @@ function TariffModal({
   useEffect(() => {
     if (isEdit && tariff) {
       setName(tariff.name);
+      setDescription(tariff.description ?? "");
       setDurationDays(tariff.durationDays);
       setSelectedSquadUuids(tariff.internalSquadUuids);
       setTrafficGb(tariff.trafficLimitBytes != null ? String((tariff.trafficLimitBytes / BYTES_PER_GB).toFixed(2)) : "");
@@ -612,6 +619,7 @@ function TariffModal({
       setCurrency((tariff.currency ?? "usd").toLowerCase());
     } else {
       setName("");
+      setDescription("");
       setDurationDays(30);
       setSelectedSquadUuids([]);
       setTrafficGb("");
@@ -665,6 +673,7 @@ function TariffModal({
       if (isEdit && tariff) {
         const payload: UpdateTariffPayload = {
           name: name.trim(),
+          description: description.trim() || null,
           durationDays,
           internalSquadUuids: selectedSquadUuids,
           trafficLimitBytes: trafficLimitBytes ?? null,
@@ -677,6 +686,7 @@ function TariffModal({
         const payload: CreateTariffPayload = {
           categoryId,
           name: name.trim(),
+          description: description.trim() || null,
           durationDays,
           internalSquadUuids: selectedSquadUuids,
           trafficLimitBytes: trafficLimitBytes ?? null,
@@ -712,6 +722,18 @@ function TariffModal({
               onChange={(e) => setName(e.target.value)}
               placeholder="Например: 30 дней, 1 год"
               required
+            />
+          </div>
+          <div>
+            <Label htmlFor="tariff-desc">Описание (необязательно)</Label>
+            <textarea
+              id="tariff-desc"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Краткое описание тарифа для клиентов"
+              rows={3}
+              maxLength={5000}
+              className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             />
           </div>
           <div>

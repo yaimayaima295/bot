@@ -9,6 +9,53 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
+const UTM_STORAGE_KEY = "stealthnet_utm";
+
+function getUtmFromSearchParams(searchParams: URLSearchParams): Record<string, string> {
+  const keys = ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"] as const;
+  const out: Record<string, string> = {};
+  for (const k of keys) {
+    const v = searchParams.get(k)?.trim();
+    if (v) out[k] = v;
+  }
+  return out;
+}
+
+function getStoredUtm(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(UTM_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed !== "object" || parsed === null) return {};
+    const out: Record<string, string> = {};
+    const keys = ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"];
+    for (const k of keys) {
+      const v = (parsed as Record<string, unknown>)[k];
+      if (typeof v === "string" && v.trim()) out[k] = v.trim();
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function storeUtm(utm: Record<string, string>) {
+  if (Object.keys(utm).length === 0) return;
+  try {
+    localStorage.setItem(UTM_STORAGE_KEY, JSON.stringify(utm));
+  } catch {
+    // ignore
+  }
+}
+
+/** UTM из URL с приоритетом, при наличии — сохраняем в localStorage для последующей регистрации */
+function useUtmCapture(searchParams: URLSearchParams) {
+  const fromUrl = getUtmFromSearchParams(searchParams);
+  if (Object.keys(fromUrl).length > 0) storeUtm(fromUrl);
+  const fromStorage = getStoredUtm();
+  return { ...fromStorage, ...fromUrl };
+}
+
 declare global {
   interface Window {
     TelegramLoginWidget?: {
@@ -32,6 +79,7 @@ export function ClientRegisterPage() {
   const telegramWidgetRef = useRef<HTMLDivElement>(null);
   const [searchParams] = useSearchParams();
   const refCode = searchParams.get("ref")?.trim() || undefined;
+  const utm = useUtmCapture(searchParams);
   const { register, registerByTelegram } = useClientAuth();
   const navigate = useNavigate();
 
@@ -65,11 +113,12 @@ export function ClientRegisterPage() {
         preferredLang: defaults.lang,
         preferredCurrency: defaults.currency,
         referralCode: refCode,
+        ...utm,
       }).then(() => navigate("/cabinet/dashboard", { replace: true }));
     };
     telegramWidgetRef.current.innerHTML = "";
     telegramWidgetRef.current.appendChild(script);
-  }, [telegramBotUsername, registerByTelegram, navigate, defaults.lang, defaults.currency, refCode]);
+  }, [telegramBotUsername, registerByTelegram, navigate, defaults.lang, defaults.currency, refCode, utm]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -83,6 +132,7 @@ export function ClientRegisterPage() {
         preferredLang: defaults.lang,
         preferredCurrency: defaults.currency,
         referralCode: refCode,
+        ...utm,
       });
       if (result?.requiresVerification) {
         setEmailSent(true);

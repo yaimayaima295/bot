@@ -22,6 +22,7 @@ function hasExtraOptionInMetadata(metadata: string | null): boolean {
   }
 }
 import { distributeReferralRewards } from "../referral/referral.service.js";
+import { notifyBalanceToppedUp, notifyTariffActivated } from "../notification/telegram-notify.service.js";
 
 export const yoomoneyWebhooksRouter = Router();
 
@@ -197,6 +198,7 @@ yoomoneyWebhooksRouter.post("/yoomoney", async (req, res) => {
       operationId,
       notificationType,
     });
+    await notifyBalanceToppedUp(payment.clientId, amountNum, currency || "RUB").catch(() => {});
   } else {
     await prisma.payment.update({
       where: { id: payment.id },
@@ -215,6 +217,7 @@ yoomoneyWebhooksRouter.post("/yoomoney", async (req, res) => {
       const activation = await activateTariffByPaymentId(payment.id);
       if (activation.ok) {
         console.log("[YooMoney Webhook] Tariff activated", { paymentId: payment.id });
+        await notifyTariffActivated(payment.clientId, payment.id).catch(() => {});
       } else {
         console.error("[YooMoney Webhook] Tariff activation failed", { paymentId: payment.id, error: (activation as { error?: string }).error });
       }

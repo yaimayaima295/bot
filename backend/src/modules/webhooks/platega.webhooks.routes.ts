@@ -11,6 +11,7 @@ import { prisma } from "../../db.js";
 import { activateTariffByPaymentId } from "../tariff/tariff-activation.service.js";
 import { applyExtraOptionByPaymentId } from "../extra-options/extra-options.service.js";
 import { distributeReferralRewards } from "../referral/referral.service.js";
+import { notifyBalanceToppedUp, notifyTariffActivated } from "../notification/telegram-notify.service.js";
 
 function hasExtraOptionInMetadata(metadata: string | null): boolean {
   if (!metadata?.trim()) return false;
@@ -267,6 +268,7 @@ plategaWebhooksRouter.post("/platega", async (req, res) => {
           transactionId,
           orderId: payment.orderId,
         });
+        await notifyBalanceToppedUp(payment.clientId, payment.amount, payment.currency || "RUB").catch(() => {});
       } else {
         console.log("[Platega Webhook] Payment already finalized", { paymentId: payment.id, status: payment.status });
       }
@@ -287,6 +289,9 @@ plategaWebhooksRouter.post("/platega", async (req, res) => {
     // Надёжная пост-обработка: даже если платеж уже PAID, повторный webhook
     // догонит активацию тарифа/рефералку.
     await ensureTariffActivation(payment.id);
+    if (payment.tariffId) {
+      await notifyTariffActivated(payment.clientId, payment.id).catch(() => {});
+    }
     await distributeReferralRewards(payment.id).catch((e) => {
       console.error("[Platega Webhook] Referral distribution error", { paymentId: payment.id, error: e });
     });

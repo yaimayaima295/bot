@@ -52,6 +52,7 @@ authRouter.post("/login", async (req, res) => {
       data: { adminId: admin.id, token: refreshToken, expiresAt },
     });
 
+    const allowedSections = parseAllowedSections(admin.allowedSections);
     return res.json({
       accessToken,
       refreshToken,
@@ -61,6 +62,7 @@ authRouter.post("/login", async (req, res) => {
         email: admin.email,
         mustChangePassword: admin.mustChangePassword,
         role: admin.role,
+        allowedSections,
       },
     });
   } catch (e) {
@@ -98,6 +100,7 @@ authRouter.post("/refresh", async (req, res) => {
     env.JWT_ACCESS_EXPIRES_IN
   );
 
+  const allowedSections = parseAllowedSections(stored.admin.allowedSections);
   return res.json({
     accessToken,
     expiresIn: env.JWT_ACCESS_EXPIRES_IN,
@@ -106,9 +109,20 @@ authRouter.post("/refresh", async (req, res) => {
       email: stored.admin.email,
       mustChangePassword: stored.admin.mustChangePassword,
       role: stored.admin.role,
+      allowedSections,
     },
   });
 });
+
+function parseAllowedSections(raw: string | null): string[] {
+  if (!raw?.trim()) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((s): s is string => typeof s === "string") : [];
+  } catch {
+    return [];
+  }
+}
 
 const changePasswordSchema = z.object({
   currentPassword: z.string().min(1),
@@ -137,9 +151,10 @@ authRouter.post("/change-password", requireAuth, async (req, res) => {
   const updated = await prisma.admin.update({
     where: { id: adminId },
     data: { passwordHash, mustChangePassword: false },
-    select: { id: true, email: true, mustChangePassword: true, role: true },
+    select: { id: true, email: true, mustChangePassword: true, role: true, allowedSections: true },
   });
 
+  const allowedSections = parseAllowedSections(updated.allowedSections);
   return res.json({
     success: true,
     message: "Password changed",
@@ -148,6 +163,7 @@ authRouter.post("/change-password", requireAuth, async (req, res) => {
       email: updated.email,
       mustChangePassword: updated.mustChangePassword,
       role: updated.role,
+      allowedSections,
     },
   });
 });

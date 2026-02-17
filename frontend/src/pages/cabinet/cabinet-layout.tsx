@@ -4,9 +4,42 @@ import { useClientAuth } from "@/contexts/client-auth";
 import { CabinetConfigProvider, useCabinetConfig } from "@/contexts/cabinet-config";
 import { createContext, useContext } from "react";
 import { useIsMiniapp } from "@/hooks/use-is-miniapp";
+import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { LayoutDashboard, Package, User, LogOut, Shield, Users, Sun, Moon, PlusCircle } from "lucide-react";
 import { useTheme } from "@/contexts/theme";
+
+/** Подключает Google Analytics 4 и Яндекс.Метрику на страницах кабинета по настройкам из админки (Маркетинг). */
+function AnalyticsScripts() {
+  useEffect(() => {
+    api.getPublicConfig().then((c) => {
+      if (c.googleAnalyticsId?.trim()) {
+        const id = c.googleAnalyticsId.trim();
+        if (document.getElementById("ga4-script")) return;
+        const script = document.createElement("script");
+        script.id = "ga4-script";
+        script.async = true;
+        script.src = `https://www.googletagmanager.com/gtag/js?id=${id}`;
+        document.head.appendChild(script);
+        const init = document.createElement("script");
+        init.id = "ga4-init";
+        init.textContent = `window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','${id}');`;
+        document.head.appendChild(init);
+      }
+      if (c.yandexMetrikaId?.trim()) {
+        const id = c.yandexMetrikaId.trim();
+        const ymId = /^\d+$/.test(id) ? id : "0";
+        if (document.getElementById("ym-script")) return;
+        const script = document.createElement("script");
+        script.id = "ym-script";
+        script.async = true;
+        script.textContent = `(function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};m[i].l=1*new Date();for(var j=0;j<document.scripts.length;j++){if(document.scripts[j].src===r)return;}k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)})(window, document, "script", "https://mc.yandex.ru/metrika/tag.js", "ym");ym(${ymId}, "init", {clickmap:true,trackLinks:true,accurateTrackBounce:true,webvisor:true});`;
+        document.head.appendChild(script);
+      }
+    }).catch(() => {});
+  }, []);
+  return null;
+}
 
 const IsMiniappContext = createContext(false);
 export function useCabinetMiniapp() {
@@ -199,14 +232,17 @@ export function CabinetLayout() {
   const isAuthPage = location.pathname === "/cabinet/login" || location.pathname === "/cabinet/register";
   const isLoggedIn = Boolean(state.token);
 
-  if (isAuthPage || !isLoggedIn) {
-    return <Outlet />;
-  }
-
   return (
-    <CabinetConfigProvider>
-      <CabinetShellWithMiniapp />
-    </CabinetConfigProvider>
+    <>
+      <AnalyticsScripts />
+      {isAuthPage || !isLoggedIn ? (
+        <Outlet />
+      ) : (
+        <CabinetConfigProvider>
+          <CabinetShellWithMiniapp />
+        </CabinetConfigProvider>
+      )}
+    </>
   );
 }
 

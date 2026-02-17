@@ -6,10 +6,12 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express, { Router } from "express";
+import multer from "multer";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db.js";
-import { requireAuth } from "../auth/middleware.js";
+import { requireAuth, requireAdminSection } from "../auth/middleware.js";
+import { hashPassword } from "../auth/auth.service.js";
 import { hashPassword as hashClientPassword } from "../client/client.service.js";
 import {
   remnaGetUsers,
@@ -37,6 +39,8 @@ import { syncFromRemna, syncToRemna, createRemnaUsersForClientsWithoutUuid } fro
 import { distributeReferralRewards } from "../referral/referral.service.js";
 import { activateTariffByPaymentId } from "../tariff/tariff-activation.service.js";
 import { registerBackupRoutes } from "../backup/backup.routes.js";
+import { runBroadcast, getBroadcastRecipientsCount } from "../broadcast/broadcast.service.js";
+import { runRule, runAllRules, getEligibleClientIds } from "../auto-broadcast/auto-broadcast.service.js";
 
 export const adminRouter = Router();
 adminRouter.use(requireAuth);
@@ -52,14 +56,26 @@ function asyncRoute(
 
 registerBackupRoutes(adminRouter, asyncRoute);
 
+adminRouter.use(requireAdminSection);
+
 adminRouter.get("/me", asyncRoute(async (req, res) => {
   const adminId = (req as unknown as { adminId: string }).adminId;
   const admin = await prisma.admin.findUnique({
     where: { id: adminId },
-    select: { id: true, email: true, mustChangePassword: true, role: true },
+    select: { id: true, email: true, mustChangePassword: true, role: true, allowedSections: true },
   });
   if (!admin) return res.status(401).json({ message: "Not found" });
-  return res.json(admin);
+  const allowedSections = admin.allowedSections
+    ? (() => {
+        try {
+          const p = JSON.parse(admin.allowedSections!) as unknown;
+          return Array.isArray(p) ? p.filter((s): s is string => typeof s === "string") : [];
+        } catch {
+          return [];
+        }
+      })()
+    : [];
+  return res.json({ ...admin, allowedSections });
 }));
 
 adminRouter.get("/remna/status", (_req, res) => {
@@ -166,7 +182,10 @@ adminRouter.post("/remna/nodes/:uuid/restart", async (req, res) => {
   return res.json(result.data ?? { ok: true });
 });
 
-/** Статистика дашборда: пользователи (локальная БД), продажи (Payment PAID), аналитика */
+/** Условие: только реальные поступления (исключаем оплату с баланса, чтобы не дублировать учёт). */
+const PAID_EXTERNAL_WHERE = { status: "PAID" as const, provider: { not: "balance" } };
+
+/** Статистика дашборда: пользователи (локальная БД), продажи (Payment PAID — только внешние поступления). */
 adminRouter.get("/dashboard/stats", async (_req, res) => {
   const now = new Date();
   const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -178,17 +197,17 @@ adminRouter.get("/dashboard/stats", async (_req, res) => {
       prisma.client.count(),
       prisma.client.count({ where: { remnawaveUuid: { not: null } } }),
       prisma.payment.aggregate({
-        where: { status: "PAID" },
+        where: PAID_EXTERNAL_WHERE,
         _sum: { amount: true },
         _count: true,
       }),
       prisma.payment.aggregate({
-        where: { status: "PAID", paidAt: { gte: sevenDaysAgo } },
+        where: { ...PAID_EXTERNAL_WHERE, paidAt: { gte: sevenDaysAgo } },
         _sum: { amount: true },
         _count: true,
       }),
       prisma.payment.aggregate({
-        where: { status: "PAID", paidAt: { gte: thirtyDaysAgo } },
+        where: { ...PAID_EXTERNAL_WHERE, paidAt: { gte: thirtyDaysAgo } },
         _sum: { amount: true },
         _count: true,
       }),
@@ -265,11 +284,12 @@ adminRouter.patch("/payments/:id", asyncRoute(async (req, res) => {
 }));
 
 /** Сериализация тарифа для JSON (BigInt → number) */
-function tariffToJson(t: { id: string; categoryId: string; name: string; durationDays: number; internalSquadUuids: string[]; trafficLimitBytes: bigint | null; deviceLimit: number | null; price: number; currency: string; sortOrder: number; createdAt: Date; updatedAt: Date }) {
+function tariffToJson(t: { id: string; categoryId: string; name: string; description: string | null; durationDays: number; internalSquadUuids: string[]; trafficLimitBytes: bigint | null; deviceLimit: number | null; price: number; currency: string; sortOrder: number; createdAt: Date; updatedAt: Date }) {
   return {
     id: t.id,
     categoryId: t.categoryId,
     name: t.name,
+    description: t.description ?? null,
     durationDays: t.durationDays,
     internalSquadUuids: t.internalSquadUuids,
     trafficLimitBytes: t.trafficLimitBytes != null ? Number(t.trafficLimitBytes) : null,
@@ -380,6 +400,7 @@ const tariffIdSchema = z.object({ id: z.string().min(1) });
 const createTariffSchema = z.object({
   categoryId: z.string().min(1),
   name: z.string().min(1).max(255),
+  description: z.string().max(5000).nullable().optional(),
   durationDays: z.number().int().min(1).max(3650),
   internalSquadUuids: z.array(z.string().uuid()).min(1),
   trafficLimitBytes: z.number().int().nonnegative().nullable().optional(),
@@ -390,6 +411,7 @@ const createTariffSchema = z.object({
 });
 const updateTariffSchema = z.object({
   name: z.string().min(1).max(255).optional(),
+  description: z.string().max(5000).nullable().optional(),
   durationDays: z.number().int().min(1).max(3650).optional(),
   internalSquadUuids: z.array(z.string().uuid()).optional(),
   trafficLimitBytes: z.number().int().nonnegative().nullable().optional(),
@@ -418,6 +440,7 @@ adminRouter.post("/tariffs", async (req, res) => {
     data: {
       categoryId: body.data.categoryId,
       name: body.data.name,
+      description: body.data.description ?? null,
       durationDays: body.data.durationDays,
       internalSquadUuids: body.data.internalSquadUuids,
       trafficLimitBytes: body.data.trafficLimitBytes != null ? BigInt(body.data.trafficLimitBytes) : null,
@@ -435,8 +458,9 @@ adminRouter.patch("/tariffs/:id", async (req, res) => {
   if (!idParse.success) return res.status(400).json({ message: "Invalid id" });
   const body = updateTariffSchema.safeParse(req.body);
   if (!body.success) return res.status(400).json({ message: "Неверные данные", errors: body.error.flatten() });
-  const data: { name?: string; durationDays?: number; internalSquadUuids?: string[]; trafficLimitBytes?: bigint | null; deviceLimit?: number | null; price?: number; currency?: string; sortOrder?: number } = {};
+  const data: { name?: string; description?: string | null; durationDays?: number; internalSquadUuids?: string[]; trafficLimitBytes?: bigint | null; deviceLimit?: number | null; price?: number; currency?: string; sortOrder?: number } = {};
   if (body.data.name != null) data.name = body.data.name;
+  if (body.data.description !== undefined) data.description = body.data.description ?? null;
   if (body.data.durationDays != null) data.durationDays = body.data.durationDays;
   if (body.data.internalSquadUuids != null) data.internalSquadUuids = body.data.internalSquadUuids;
   if (body.data.trafficLimitBytes !== undefined) data.trafficLimitBytes = body.data.trafficLimitBytes != null ? BigInt(body.data.trafficLimitBytes) : null;
@@ -866,6 +890,9 @@ const updateSettingsSchema = z.object({
   sellOptionsDevicesProducts: z.string().max(10000).nullable().optional(),
   sellOptionsServersEnabled: z.boolean().optional(),
   sellOptionsServersProducts: z.string().max(10000).nullable().optional(),
+  googleAnalyticsId: z.string().max(100).nullable().optional(),
+  yandexMetrikaId: z.string().max(100).nullable().optional(),
+  autoBroadcastCron: z.string().max(100).nullable().optional(),
 });
 
 adminRouter.patch("/settings", async (req, res) => {
@@ -1180,6 +1207,22 @@ adminRouter.patch("/settings", async (req, res) => {
     const val = typeof updates.sellOptionsServersProducts === "string" ? updates.sellOptionsServersProducts : (updates.sellOptionsServersProducts == null ? "" : JSON.stringify(updates.sellOptionsServersProducts));
     await prisma.systemSetting.upsert({ where: { key: "sell_options_servers_products" }, create: { key: "sell_options_servers_products", value: val }, update: { value: val } });
   }
+  if (updates.googleAnalyticsId !== undefined) {
+    await prisma.systemSetting.upsert({ where: { key: "google_analytics_id" }, create: { key: "google_analytics_id", value: updates.googleAnalyticsId ?? "" }, update: { value: updates.googleAnalyticsId ?? "" } });
+  }
+  if (updates.yandexMetrikaId !== undefined) {
+    await prisma.systemSetting.upsert({ where: { key: "yandex_metrika_id" }, create: { key: "yandex_metrika_id", value: updates.yandexMetrikaId ?? "" }, update: { value: updates.yandexMetrikaId ?? "" } });
+  }
+  if (updates.autoBroadcastCron !== undefined) {
+    const val = updates.autoBroadcastCron ?? "";
+    await prisma.systemSetting.upsert({
+      where: { key: "auto_broadcast_cron" },
+      create: { key: "auto_broadcast_cron", value: val },
+      update: { value: val },
+    });
+    const { restartAutoBroadcastScheduler } = await import("../auto-broadcast/auto-broadcast-scheduler.js");
+    await restartAutoBroadcastScheduler();
+  }
   const config = await getSystemConfig();
   return res.json(config);
 });
@@ -1230,6 +1273,161 @@ adminRouter.post("/sync/create-remna-for-missing", async (_req, res) => {
     });
   }
 });
+
+// ——————————————— Рассылка ———————————————
+
+const broadcastSchema = z.object({
+  channel: z.enum(["telegram", "email", "both"]),
+  subject: z.string().max(500).optional(),
+  message: z.string().min(1, "Текст сообщения обязателен").max(4096),
+});
+
+const broadcastUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 },
+});
+
+adminRouter.get("/broadcast/recipients-count", asyncRoute(async (_req, res) => {
+  const counts = await getBroadcastRecipientsCount();
+  return res.json(counts);
+}));
+
+adminRouter.post(
+  "/broadcast",
+  broadcastUpload.single("attachment"),
+  asyncRoute(async (req, res) => {
+    const parsed = broadcastSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    }
+    const { channel, subject, message } = parsed.data;
+    const attachment =
+      req.file && req.file.buffer
+        ? { buffer: req.file.buffer, mimetype: req.file.mimetype || "application/octet-stream", originalname: req.file.originalname || "file" }
+        : undefined;
+    const result = await runBroadcast({
+      channel,
+      subject: subject ?? "",
+      message,
+      attachment,
+    });
+    return res.json(result);
+  })
+);
+
+// ——————————————— Авто-рассылка ———————————————
+
+const autoBroadcastRuleSchema = z.object({
+  name: z.string().min(1).max(200),
+  triggerType: z.enum([
+    "after_registration",
+    "inactivity",
+    "no_payment",
+    "trial_not_connected",
+    "trial_used_never_paid",
+    "no_traffic",
+    "subscription_expired",
+  ]),
+  delayDays: z.union([z.number(), z.string()]).transform((v) => (typeof v === "string" ? parseInt(v, 10) : v)).pipe(z.number().int().min(0).max(365)),
+  channel: z.enum(["telegram", "email", "both"]),
+  subject: z.string().max(500).nullish(),
+  message: z.string().min(1).max(4096),
+  enabled: z.boolean().optional(),
+});
+
+adminRouter.get("/auto-broadcast/rules", asyncRoute(async (_req, res) => {
+  const rules = await prisma.autoBroadcastRule.findMany({
+    orderBy: { createdAt: "desc" },
+    include: { _count: { select: { logs: true } } },
+  });
+  return res.json(
+    rules.map((r) => ({
+      id: r.id,
+      name: r.name,
+      triggerType: r.triggerType,
+      delayDays: r.delayDays,
+      channel: r.channel,
+      subject: r.subject,
+      message: r.message,
+      enabled: r.enabled,
+      createdAt: r.createdAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
+      sentCount: r._count.logs,
+    }))
+  );
+}));
+
+adminRouter.get("/auto-broadcast/rules/:id/eligible-count", asyncRoute(async (req, res) => {
+  const ruleId = req.params.id;
+  const ids = await getEligibleClientIds(ruleId);
+  return res.json({ count: ids.length });
+}));
+
+adminRouter.post("/auto-broadcast/rules", asyncRoute(async (req, res) => {
+  const parsed = autoBroadcastRuleSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+  const data = parsed.data;
+  const rule = await prisma.autoBroadcastRule.create({
+    data: {
+      name: data.name,
+      triggerType: data.triggerType,
+      delayDays: data.delayDays,
+      channel: data.channel,
+      subject: data.subject ?? null,
+      message: data.message,
+      enabled: data.enabled ?? true,
+    },
+  });
+  return res.status(201).json({
+    id: rule.id,
+    name: rule.name,
+    triggerType: rule.triggerType,
+    delayDays: rule.delayDays,
+    channel: rule.channel,
+    subject: rule.subject,
+    message: rule.message,
+    enabled: rule.enabled,
+    createdAt: rule.createdAt.toISOString(),
+    updatedAt: rule.updatedAt.toISOString(),
+  });
+}));
+
+adminRouter.patch("/auto-broadcast/rules/:id", asyncRoute(async (req, res) => {
+  const id = req.params.id;
+  const parsed = autoBroadcastRuleSchema.partial().safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+  const rule = await prisma.autoBroadcastRule.update({
+    where: { id },
+    data: parsed.data as Record<string, unknown>,
+  });
+  return res.json({
+    id: rule.id,
+    name: rule.name,
+    triggerType: rule.triggerType,
+    delayDays: rule.delayDays,
+    channel: rule.channel,
+    subject: rule.subject,
+    message: rule.message,
+    enabled: rule.enabled,
+    createdAt: rule.createdAt.toISOString(),
+    updatedAt: rule.updatedAt.toISOString(),
+  });
+}));
+
+adminRouter.delete("/auto-broadcast/rules/:id", asyncRoute(async (req, res) => {
+  await prisma.autoBroadcastRule.delete({ where: { id: req.params.id } });
+  return res.status(204).send();
+}));
+
+adminRouter.post("/auto-broadcast/run", asyncRoute(async (_req, res) => {
+  const results = await runAllRules();
+  return res.json({ results });
+}));
+
+adminRouter.post("/auto-broadcast/run/:ruleId", asyncRoute(async (req, res) => {
+  const result = await runRule(req.params.ruleId);
+  return res.json(result);
+}));
 
 // ——————————————— Промо-группы ———————————————
 
@@ -1517,27 +1715,29 @@ adminRouter.get("/analytics", async (_req, res) => {
   const uniqueBuyers = new Set<string>();
   let rev7 = 0, rev30 = 0, cnt7 = 0, cnt30 = 0;
 
+  const isExternal = (provider: string | null) => provider !== "balance";
   for (const p of payments90) {
     const day = p.paidAt ? p.paidAt.toISOString().slice(0, 10) : "unknown";
-    revenueByDay[day] = (revenueByDay[day] ?? 0) + p.amount;
     const prov = p.provider ?? "unknown";
-    revenueByProvider[prov] = (revenueByProvider[prov] ?? 0) + p.amount;
-    if (p.tariffId) {
-      tariffSalesCount[p.tariffId] = (tariffSalesCount[p.tariffId] ?? 0) + 1;
-      tariffRevenue[p.tariffId] = (tariffRevenue[p.tariffId] ?? 0) + p.amount;
+    if (isExternal(p.provider)) {
+      revenueByDay[day] = (revenueByDay[day] ?? 0) + p.amount;
+      uniqueBuyers.add(p.clientId);
+      if (p.paidAt && p.paidAt >= day7Ago) { rev7 += p.amount; cnt7++; }
+      if (p.paidAt && p.paidAt >= day30Ago) { rev30 += p.amount; cnt30++; }
+      if (p.tariffId) tariffRevenue[p.tariffId] = (tariffRevenue[p.tariffId] ?? 0) + p.amount;
     }
-    uniqueBuyers.add(p.clientId);
-    if (p.paidAt && p.paidAt >= day7Ago) { rev7 += p.amount; cnt7++; }
-    if (p.paidAt && p.paidAt >= day30Ago) { rev30 += p.amount; cnt30++; }
+    revenueByProvider[prov] = (revenueByProvider[prov] ?? 0) + p.amount;
+    if (p.tariffId) tariffSalesCount[p.tariffId] = (tariffSalesCount[p.tariffId] ?? 0) + 1;
   }
 
   const revenueSeries = fillDaySeries(revenueByDay, day90Ago, now);
 
-  // ─── Клиенты за 90 дней ───
+  // ─── Клиенты за 90 дней (включая UTM для аналитики по кампаниям) ───
   const allClients = await prisma.client.findMany({
     select: {
       id: true, createdAt: true, telegramId: true, email: true,
       trialUsed: true, remnawaveUuid: true, referrerId: true, balance: true,
+      utmSource: true, utmCampaign: true,
     },
   });
 
@@ -1562,6 +1762,34 @@ adminRouter.get("/analytics", async (_req, res) => {
   }
 
   const clientsSeries = fillDaySeries(clientsByDay, day90Ago, now);
+
+  // ─── Аналитика по источникам трафика (UTM) ───
+  const bySourceKey: Record<string, { registrations: number; trials: number; payments: number; revenue: number }> = {};
+  function keyFor(source: string | null, campaign: string | null) {
+    const s = source?.trim() || "(без метки)";
+    const c = campaign?.trim() || "";
+    return `${s}\t${c}`;
+  }
+  for (const c of allClients) {
+    const k = keyFor(c.utmSource, c.utmCampaign);
+    if (!bySourceKey[k]) bySourceKey[k] = { registrations: 0, trials: 0, payments: 0, revenue: 0 };
+    bySourceKey[k].registrations++;
+    if (c.trialUsed) bySourceKey[k].trials++;
+  }
+  const clientIdToUtm = new Map(allClients.map((c) => [c.id, { source: c.utmSource, campaign: c.utmCampaign }]));
+  for (const p of payments90) {
+    const utm = clientIdToUtm.get(p.clientId);
+    const k = keyFor(utm?.source ?? null, utm?.campaign ?? null);
+    if (!bySourceKey[k]) bySourceKey[k] = { registrations: 0, trials: 0, payments: 0, revenue: 0 };
+    if (isExternal(p.provider)) {
+      bySourceKey[k].payments++;
+      bySourceKey[k].revenue += p.amount;
+    }
+  }
+  const campaignsStats = Object.entries(bySourceKey).map(([key, v]) => {
+    const [source, campaign] = key.split("\t");
+    return { source, campaign: campaign || null, ...v };
+  }).sort((a, b) => b.revenue - a.revenue);
 
   // ─── Триалы по дням (клиенты с trialUsed, приближаем по createdAt) ───
   // Точной даты триала нет, но можем показать клиентов использовавших триал
@@ -1702,13 +1930,13 @@ adminRouter.get("/analytics", async (_req, res) => {
   }
   const refCreditsSeries = fillDaySeries(refCreditsByDay, day90Ago, now);
 
-  // ─── Сводка ───
+  // ─── Сводка (доход и кол-во платежей — только внешние поступления, без оплаты с баланса) ───
   const [totalClients, activeClients, totalRevenueAgg, totalPayments, referralCreditsSum,
     clientsNew24h, clientsNew7d, clientsNew30d, paymentsPending] = await Promise.all([
     prisma.client.count(),
     prisma.client.count({ where: { remnawaveUuid: { not: null } } }),
-    prisma.payment.aggregate({ where: { status: "PAID" }, _sum: { amount: true } }),
-    prisma.payment.count({ where: { status: "PAID" } }),
+    prisma.payment.aggregate({ where: PAID_EXTERNAL_WHERE, _sum: { amount: true } }),
+    prisma.payment.count({ where: PAID_EXTERNAL_WHERE }),
     prisma.referralCredit.aggregate({ _sum: { amount: true } }),
     prisma.client.count({ where: { createdAt: { gte: day1Ago } } }),
     prisma.client.count({ where: { createdAt: { gte: day7Ago } } }),
@@ -1735,6 +1963,7 @@ adminRouter.get("/analytics", async (_req, res) => {
     topTariffs,
     providerSeries,
     topReferrers,
+    campaignsStats,
     promoGroupStats: promoGroupStats.map((g) => ({
       name: g.name,
       code: g.code,
@@ -1843,3 +2072,185 @@ adminRouter.get("/sales-report", async (req, res) => {
     totalCount: agg._count,
   });
 });
+
+// ═══════════════════════════════════════════════════════════════
+//  МЕНЕДЖЕРЫ (только для роли ADMIN)
+// ═══════════════════════════════════════════════════════════════
+
+export const ADMIN_ALLOWED_SECTIONS = [
+  "dashboard",
+  "remna-nodes",
+  "clients",
+  "tariffs",
+  "promo",
+  "promo-codes",
+  "analytics",
+  "marketing",
+  "sales-report",
+  "broadcast",
+  "auto-broadcast",
+  "backup",
+  "settings",
+] as const;
+
+/** Список админов и менеджеров (только ADMIN). */
+adminRouter.get("/admins", asyncRoute(async (req, res) => {
+  const ext = req as unknown as { adminRole?: string };
+  if (ext.adminRole !== "ADMIN") {
+    return res.status(403).json({ message: "Only admin can list managers" });
+  }
+  const list = await prisma.admin.findMany({
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      email: true,
+      role: true,
+      allowedSections: true,
+      mustChangePassword: true,
+      createdAt: true,
+    },
+  });
+  const allowedSections = (raw: string | null): string[] => {
+    if (!raw?.trim()) return [];
+    try {
+      const p = JSON.parse(raw) as unknown;
+      return Array.isArray(p) ? p.filter((s): s is string => typeof s === "string") : [];
+    } catch {
+      return [];
+    }
+  };
+  return res.json(
+    list.map((a) => ({
+      id: a.id,
+      email: a.email,
+      role: a.role,
+      allowedSections: allowedSections(a.allowedSections),
+      mustChangePassword: a.mustChangePassword,
+      createdAt: a.createdAt.toISOString(),
+    }))
+  );
+}));
+
+const createManagerSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(8, "Min 8 characters"),
+  allowedSections: z.array(z.string()).optional(),
+});
+
+/** Создать менеджера (только ADMIN). */
+adminRouter.post("/admins", asyncRoute(async (req, res) => {
+  const ext = req as unknown as { adminRole?: string };
+  if (ext.adminRole !== "ADMIN") {
+    return res.status(403).json({ message: "Only admin can create managers" });
+  }
+  const body = createManagerSchema.safeParse(req.body);
+  if (!body.success) {
+    return res.status(400).json({ message: "Invalid input", errors: body.error.flatten() });
+  }
+  const existing = await prisma.admin.findUnique({ where: { email: body.data.email } });
+  if (existing) {
+    return res.status(400).json({ message: "Email already registered" });
+  }
+  const sections = (body.data.allowedSections ?? []).filter((s) =>
+    (ADMIN_ALLOWED_SECTIONS as readonly string[]).includes(s)
+  );
+  const passwordHash = await hashPassword(body.data.password);
+  const admin = await prisma.admin.create({
+    data: {
+      email: body.data.email,
+      passwordHash,
+      mustChangePassword: true,
+      role: "MANAGER",
+      allowedSections: JSON.stringify(sections),
+    },
+    select: { id: true, email: true, role: true, allowedSections: true, createdAt: true },
+  });
+  const allowed = admin.allowedSections
+    ? (() => {
+        try {
+          const p = JSON.parse(admin.allowedSections) as unknown;
+          return Array.isArray(p) ? p.filter((s): s is string => typeof s === "string") : [];
+        } catch {
+          return [];
+        }
+      })()
+    : [];
+  return res.status(201).json({
+    id: admin.id,
+    email: admin.email,
+    role: admin.role,
+    allowedSections: allowed,
+    createdAt: admin.createdAt.toISOString(),
+  });
+}));
+
+const updateManagerSchema = z.object({
+  allowedSections: z.array(z.string()).optional(),
+  password: z.string().min(8, "Min 8 characters").optional(),
+});
+
+/** Обновить менеджера (разделы доступа и/или пароль). Только ADMIN. */
+adminRouter.patch("/admins/:id", asyncRoute(async (req, res) => {
+  const ext = req as unknown as { adminRole?: string; adminId?: string };
+  if (ext.adminRole !== "ADMIN") {
+    return res.status(403).json({ message: "Only admin can update managers" });
+  }
+  const body = updateManagerSchema.safeParse(req.body);
+  if (!body.success) {
+    return res.status(400).json({ message: "Invalid input", errors: body.error.flatten() });
+  }
+  const target = await prisma.admin.findUnique({ where: { id: req.params.id } });
+  if (!target) return res.status(404).json({ message: "Not found" });
+  if (target.role === "ADMIN") {
+    return res.status(403).json({ message: "Cannot modify full admin" });
+  }
+  const updates: { allowedSections?: string; passwordHash?: string } = {};
+  if (body.data.allowedSections !== undefined) {
+    const sections = body.data.allowedSections.filter((s) =>
+      (ADMIN_ALLOWED_SECTIONS as readonly string[]).includes(s)
+    );
+    updates.allowedSections = JSON.stringify(sections);
+  }
+  if (body.data.password?.trim()) {
+    updates.passwordHash = await hashPassword(body.data.password);
+  }
+  const updated = await prisma.admin.update({
+    where: { id: req.params.id },
+    data: updates,
+    select: { id: true, email: true, role: true, allowedSections: true },
+  });
+  const allowed = updated.allowedSections
+    ? (() => {
+        try {
+          const p = JSON.parse(updated.allowedSections) as unknown;
+          return Array.isArray(p) ? p.filter((s): s is string => typeof s === "string") : [];
+        } catch {
+          return [];
+        }
+      })()
+    : [];
+  return res.json({
+    id: updated.id,
+    email: updated.email,
+    role: updated.role,
+    allowedSections: allowed,
+  });
+}));
+
+/** Удалить менеджера. Только ADMIN. Нельзя удалить полного админа. */
+adminRouter.delete("/admins/:id", asyncRoute(async (req, res) => {
+  const ext = req as unknown as { adminRole?: string; adminId?: string };
+  if (ext.adminRole !== "ADMIN") {
+    return res.status(403).json({ message: "Only admin can delete managers" });
+  }
+  if (req.params.id === ext.adminId) {
+    return res.status(400).json({ message: "Cannot delete yourself" });
+  }
+  const target = await prisma.admin.findUnique({ where: { id: req.params.id } });
+  if (!target) return res.status(404).json({ message: "Not found" });
+  if (target.role === "ADMIN") {
+    return res.status(403).json({ message: "Cannot delete full admin" });
+  }
+  await prisma.admin.delete({ where: { id: req.params.id } });
+  return res.json({ success: true });
+}));

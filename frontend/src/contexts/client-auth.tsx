@@ -17,8 +17,8 @@ type ClientAuthState = {
 type ClientAuthValue = {
   state: ClientAuthState;
   login: (email: string, password: string) => Promise<void>;
-  register: (data: { email: string; password: string; preferredLang?: string; preferredCurrency?: string; referralCode?: string }) => Promise<{ requiresVerification: true } | void>;
-  registerByTelegram: (data: { telegramId: string; telegramUsername?: string; preferredLang?: string; preferredCurrency?: string; referralCode?: string }) => Promise<void>;
+  register: (data: { email: string; password: string; preferredLang?: string; preferredCurrency?: string; referralCode?: string; utm_source?: string; utm_medium?: string; utm_campaign?: string; utm_content?: string; utm_term?: string }) => Promise<{ requiresVerification: true } | void>;
+  registerByTelegram: (data: { telegramId: string; telegramUsername?: string; preferredLang?: string; preferredCurrency?: string; referralCode?: string; utm_source?: string; utm_medium?: string; utm_campaign?: string; utm_content?: string; utm_term?: string }) => Promise<void>;
   verifyEmail: (token: string) => Promise<void>;
   logout: () => void;
   refreshProfile: () => Promise<void>;
@@ -91,13 +91,18 @@ export function ClientAuthProvider({ children }: { children: React.ReactNode }) 
   }, []);
 
   const register = useCallback(
-    async (data: { email: string; password: string; preferredLang?: string; preferredCurrency?: string; referralCode?: string }) => {
+    async (data: { email: string; password: string; preferredLang?: string; preferredCurrency?: string; referralCode?: string; utm_source?: string; utm_medium?: string; utm_campaign?: string; utm_content?: string; utm_term?: string }) => {
       const res = await api.clientRegister({
         email: data.email,
         password: data.password,
         preferredLang: data.preferredLang ?? "ru",
         preferredCurrency: data.preferredCurrency ?? "usd",
         referralCode: data.referralCode,
+        utm_source: data.utm_source,
+        utm_medium: data.utm_medium,
+        utm_campaign: data.utm_campaign,
+        utm_content: data.utm_content,
+        utm_term: data.utm_term,
       });
       if ("requiresVerification" in res && res.requiresVerification) {
         return { requiresVerification: true as const };
@@ -110,13 +115,18 @@ export function ClientAuthProvider({ children }: { children: React.ReactNode }) 
   );
 
   const registerByTelegram = useCallback(
-    async (data: { telegramId: string; telegramUsername?: string; preferredLang?: string; preferredCurrency?: string; referralCode?: string }) => {
+    async (data: { telegramId: string; telegramUsername?: string; preferredLang?: string; preferredCurrency?: string; referralCode?: string; utm_source?: string; utm_medium?: string; utm_campaign?: string; utm_content?: string; utm_term?: string }) => {
       const res = await api.clientRegister({
         telegramId: data.telegramId,
         telegramUsername: data.telegramUsername,
         preferredLang: data.preferredLang ?? "ru",
         preferredCurrency: data.preferredCurrency ?? "usd",
         referralCode: data.referralCode,
+        utm_source: data.utm_source,
+        utm_medium: data.utm_medium,
+        utm_campaign: data.utm_campaign,
+        utm_content: data.utm_content,
+        utm_term: data.utm_term,
       });
       if ("token" in res && res.token) {
         setState({ token: res.token, client: res.client, miniappAuthLoading: false, miniappAuthAttempted: true });

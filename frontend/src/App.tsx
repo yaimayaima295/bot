@@ -19,8 +19,12 @@ import { SettingsPage } from "@/pages/settings";
 import { PromoPage } from "@/pages/promo";
 import { PromoCodesPage } from "@/pages/promo-codes";
 import { AnalyticsPage } from "@/pages/analytics";
+import { MarketingPage } from "@/pages/marketing";
+import { AdminsPage } from "@/pages/admins";
 import { SalesReportPage } from "@/pages/sales-report";
 import { BackupPage } from "@/pages/backup";
+import { BroadcastPage } from "@/pages/broadcast";
+import { AutoBroadcastPage } from "@/pages/auto-broadcast";
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { CabinetLayout } from "@/pages/cabinet/cabinet-layout";
 import { ClientLoginPage } from "@/pages/cabinet/client-login";
@@ -132,7 +136,11 @@ function AppRoutes() {
         <Route path="promo" element={<ForceChangePassword><PromoPage /></ForceChangePassword>} />
         <Route path="promo-codes" element={<ForceChangePassword><PromoCodesPage /></ForceChangePassword>} />
         <Route path="analytics" element={<ForceChangePassword><AnalyticsPage /></ForceChangePassword>} />
+        <Route path="marketing" element={<ForceChangePassword><MarketingPage /></ForceChangePassword>} />
+        <Route path="admins" element={<ForceChangePassword><AdminsPage /></ForceChangePassword>} />
         <Route path="sales-report" element={<ForceChangePassword><SalesReportPage /></ForceChangePassword>} />
+        <Route path="broadcast" element={<ForceChangePassword><BroadcastPage /></ForceChangePassword>} />
+        <Route path="auto-broadcast" element={<ForceChangePassword><AutoBroadcastPage /></ForceChangePassword>} />
         <Route path="backup" element={<ForceChangePassword><BackupPage /></ForceChangePassword>} />
       </Route>
       <Route

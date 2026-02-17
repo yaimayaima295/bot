@@ -59,6 +59,7 @@ interface AnalyticsData {
   topTariffs: { name: string; count: number; revenue: number }[];
   providerSeries: { provider: string; amount: number }[];
   topReferrers: { id: string; name: string; referrals: number; earnings: number; l1: number; l2: number; l3: number; credits: number }[];
+  campaignsStats: { source: string; campaign: string | null; registrations: number; trials: number; payments: number; revenue: number }[];
   promoGroupStats: { name: string; code: string; maxActivations: number; activations: number }[];
   promoCodeStats: { code: string; name: string; type: string; maxUses: number; usages: number }[];
   summary: {
@@ -138,10 +139,10 @@ export function AnalyticsPage() {
           Основные метрики
         </h2>
         <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
-          <MetricCard icon={DollarSign} label="Общий доход" value={fmt(s.totalRevenue)} color="text-green-500" />
-          <MetricCard icon={DollarSign} label="Доход 7 дн." value={fmt(s.rev7)} sub={`${s.cnt7} платежей`} color="text-green-500" />
-          <MetricCard icon={DollarSign} label="Доход 30 дн." value={fmt(s.rev30)} sub={`${s.cnt30} платежей`} color="text-green-500" />
-          <MetricCard icon={ShoppingCart} label="Всего платежей" value={fmt(s.totalPayments)} sub={`${s.paymentsPending} ожидают`} color="text-blue-500" />
+          <MetricCard icon={DollarSign} label="Поступления" value={fmt(s.totalRevenue)} sub="с платёжек, без оплаты с баланса" color="text-green-500" />
+          <MetricCard icon={DollarSign} label="Поступления 7 дн." value={fmt(s.rev7)} sub={`${s.cnt7} платежей`} color="text-green-500" />
+          <MetricCard icon={DollarSign} label="Поступления 30 дн." value={fmt(s.rev30)} sub={`${s.cnt30} платежей`} color="text-green-500" />
+          <MetricCard icon={ShoppingCart} label="Платежей с платёжек" value={fmt(s.totalPayments)} sub={`${s.paymentsPending} ожидают`} color="text-blue-500" />
           <MetricCard icon={Target} label="Средний чек" value={fmtDec(s.avgCheck)} color="text-indigo-500" />
         </div>
       </section>
@@ -336,6 +337,48 @@ export function AnalyticsPage() {
           )}
         </ChartCard>
       </div>
+
+      {/* ═══ ИСТОЧНИКИ ТРАФИКА (UTM / КАМПАНИИ) ═══ */}
+      <section>
+        <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+          <Target className="h-5 w-5 text-primary" />
+          Источники трафика (UTM)
+        </h2>
+        {!data.campaignsStats?.length ? (
+          <Card><CardContent className="py-8 text-center text-sm text-muted-foreground">Нет данных по источникам. Используйте ссылки с utm_source, utm_campaign или бот с start=c_источник_кампания</CardContent></Card>
+        ) : (
+          <Card>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-muted/50">
+                      <th className="text-left px-4 py-3 font-medium text-muted-foreground">Источник</th>
+                      <th className="text-left px-4 py-3 font-medium text-muted-foreground">Кампания</th>
+                      <th className="text-right px-4 py-3 font-medium text-muted-foreground">Регистрации</th>
+                      <th className="text-right px-4 py-3 font-medium text-muted-foreground">Триалы</th>
+                      <th className="text-right px-4 py-3 font-medium text-muted-foreground">Платежи</th>
+                      <th className="text-right px-4 py-3 font-medium text-muted-foreground">Доход</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.campaignsStats.map((row, i) => (
+                      <tr key={i} className="border-b hover:bg-muted/30 transition-colors">
+                        <td className="px-4 py-3 font-medium">{row.source}</td>
+                        <td className="px-4 py-3 text-muted-foreground">{row.campaign ?? "—"}</td>
+                        <td className="px-4 py-3 text-right">{fmt(row.registrations)}</td>
+                        <td className="px-4 py-3 text-right">{fmt(row.trials)}</td>
+                        <td className="px-4 py-3 text-right">{fmt(row.payments)}</td>
+                        <td className="px-4 py-3 text-right font-medium text-green-600 dark:text-green-400">{fmtDec(row.revenue)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </section>
 
       {/* ═══ ТОП РЕФЕРАЛОВ ═══ */}
       <section>

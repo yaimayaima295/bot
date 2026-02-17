@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { LogIn, Shield } from "lucide-react";
 import { useClientAuth } from "@/contexts/client-auth";
@@ -20,8 +20,26 @@ export function ClientLoginPage() {
   });
   const [telegramBotUsername, setTelegramBotUsername] = useState<string | null>(null);
   const telegramWidgetRef = useRef<HTMLDivElement>(null);
+  const [searchParams] = useSearchParams();
   const { login, registerByTelegram } = useClientAuth();
   const navigate = useNavigate();
+
+  // Сохраняем UTM из URL для последующей регистрации (если пользователь перейдёт на /cabinet/register)
+  useEffect(() => {
+    const keys = ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"];
+    const utm: Record<string, string> = {};
+    for (const k of keys) {
+      const v = searchParams.get(k)?.trim();
+      if (v) utm[k] = v;
+    }
+    if (Object.keys(utm).length > 0) {
+      try {
+        localStorage.setItem("stealthnet_utm", JSON.stringify(utm));
+      } catch {
+        // ignore
+      }
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     api

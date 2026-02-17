@@ -9,6 +9,7 @@ import { prisma } from "../../db.js";
 import { activateTariffByPaymentId } from "../tariff/tariff-activation.service.js";
 import { applyExtraOptionByPaymentId } from "../extra-options/extra-options.service.js";
 import { distributeReferralRewards } from "../referral/referral.service.js";
+import { notifyBalanceToppedUp, notifyTariffActivated } from "../notification/telegram-notify.service.js";
 
 function hasExtraOptionInMetadata(metadata: string | null): boolean {
   if (!metadata?.trim()) return false;
@@ -63,7 +64,7 @@ yookassaWebhooksRouter.post("/yookassa", async (req, res) => {
 
   const payment = await prisma.payment.findFirst({
     where: { id: paymentId, provider: "yookassa" },
-    select: { id: true, clientId: true, amount: true, tariffId: true, status: true, metadata: true },
+    select: { id: true, clientId: true, amount: true, currency: true, tariffId: true, status: true, metadata: true },
   });
 
   if (!payment) {
@@ -95,6 +96,7 @@ yookassaWebhooksRouter.post("/yookassa", async (req, res) => {
       clientId: payment.clientId,
       amount: payment.amount,
     });
+    await notifyBalanceToppedUp(payment.clientId, payment.amount, payment.currency || "RUB").catch(() => {});
   } else if (isExtraOption) {
     const result = await applyExtraOptionByPaymentId(payment.id);
     if (result.ok) {
@@ -109,6 +111,7 @@ yookassaWebhooksRouter.post("/yookassa", async (req, res) => {
     const activation = await activateTariffByPaymentId(payment.id);
     if (activation.ok) {
       console.log("[YooKassa Webhook] Tariff activated", { paymentId: payment.id });
+      await notifyTariffActivated(payment.clientId, payment.id).catch(() => {});
     } else {
       console.error("[YooKassa Webhook] Tariff activation failed", {
         paymentId: payment.id,

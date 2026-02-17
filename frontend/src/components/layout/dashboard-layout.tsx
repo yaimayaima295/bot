@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Shield, LayoutDashboard, Users, CreditCard, Settings, LogOut, KeyRound,
   Megaphone, Tag, BarChart3, FileText, ExternalLink, Sun, Moon, Monitor,
-  Palette, Menu, X, Database,
+  Palette, Menu, X, Database, Target, UserCog, Send, CalendarClock,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth";
 import { useTheme, ACCENT_PALETTES, type ThemeMode, type ThemeAccent } from "@/contexts/theme";
@@ -12,20 +12,30 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 
-const PANEL_VERSION = "3.1.4";
+const PANEL_VERSION = "3.1.5";
 const GITHUB_URL = "https://github.com/STEALTHNET-APP/remnawave-STEALTHNET-Bot";
 
-const nav = [
-  { to: "/admin", label: "Дашборд", icon: LayoutDashboard },
-  { to: "/admin/clients", label: "Клиенты", icon: Users },
-  { to: "/admin/tariffs", label: "Тарифы", icon: CreditCard },
-  { to: "/admin/promo", label: "Промо-ссылки", icon: Megaphone },
-  { to: "/admin/promo-codes", label: "Промокоды", icon: Tag },
-  { to: "/admin/analytics", label: "Аналитика", icon: BarChart3 },
-  { to: "/admin/sales-report", label: "Отчёты продаж", icon: FileText },
-  { to: "/admin/backup", label: "Бэкапы", icon: Database },
-  { to: "/admin/settings", label: "Настройки", icon: Settings },
+const navWithSections: { to: string; label: string; icon: typeof LayoutDashboard; section: string }[] = [
+  { to: "/admin", label: "Дашборд", icon: LayoutDashboard, section: "dashboard" },
+  { to: "/admin/clients", label: "Клиенты", icon: Users, section: "clients" },
+  { to: "/admin/tariffs", label: "Тарифы", icon: CreditCard, section: "tariffs" },
+  { to: "/admin/promo", label: "Промо-ссылки", icon: Megaphone, section: "promo" },
+  { to: "/admin/promo-codes", label: "Промокоды", icon: Tag, section: "promo-codes" },
+  { to: "/admin/analytics", label: "Аналитика", icon: BarChart3, section: "analytics" },
+  { to: "/admin/marketing", label: "Маркетинг", icon: Target, section: "marketing" },
+  { to: "/admin/sales-report", label: "Отчёты продаж", icon: FileText, section: "sales-report" },
+  { to: "/admin/broadcast", label: "Рассылка", icon: Send, section: "broadcast" },
+  { to: "/admin/auto-broadcast", label: "Авто-рассылка", icon: CalendarClock, section: "auto-broadcast" },
+  { to: "/admin/backup", label: "Бэкапы", icon: Database, section: "backup" },
+  { to: "/admin/settings", label: "Настройки", icon: Settings, section: "settings" },
+  { to: "/admin/admins", label: "Менеджеры", icon: UserCog, section: "admins" },
 ];
+
+function canAccessSection(role: string, allowedSections: string[] | undefined, section: string): boolean {
+  if (role === "ADMIN") return true;
+  if (section === "admins") return false;
+  return Array.isArray(allowedSections) && allowedSections.includes(section);
+}
 
 const MODE_OPTIONS: { value: ThemeMode; icon: typeof Sun; label: string }[] = [
   { value: "light", icon: Sun, label: "Светлая" },
@@ -48,6 +58,10 @@ function isNavActive(pathname: string, to: string): boolean {
 
 function NavItems({ onClick }: { onClick?: () => void }) {
   const location = useLocation();
+  const admin = useAuth().state.admin;
+  const nav = admin
+    ? navWithSections.filter((item) => canAccessSection(admin.role, admin.allowedSections, item.section))
+    : navWithSections;
   return (
     <>
       {nav.map((item) => {
@@ -87,6 +101,20 @@ export function DashboardLayout() {
   useEffect(() => {
     setMobileMenuOpen(false);
   }, [location.pathname]);
+
+  // Редирект менеджера при заходе в раздел без доступа
+  useEffect(() => {
+    const admin = state.admin;
+    if (!admin || admin.role !== "MANAGER") return;
+    const path = location.pathname.replace(/^\/admin\/?/, "") || "dashboard";
+    const section = path.split("/")[0] || "dashboard";
+    const allowed = admin.allowedSections ?? [];
+    if (section === "admins" || !allowed.includes(section)) {
+      const first = allowed[0];
+      const to = !first ? "/admin" : first === "dashboard" ? "/admin" : `/admin/${first}`;
+      navigate(to, { replace: true });
+    }
+  }, [state.admin, location.pathname, navigate]);
 
   useEffect(() => {
     const token = state.accessToken;

@@ -429,7 +429,28 @@ function formatMoney(amount: number, currency: string): string {
   return `${amount} ${sym}`;
 }
 
-// ——— /start с реферальным кодом (например /start ref_ABC123) или промо (/start promo_XXXX)
+/** Парсинг start-параметра: ref_CODE, c_SOURCE_CAMPAIGN или c_SOURCE_MEDIUM_CAMPAIGN, можно комбинировать ref_ABC_c_facebook_summer */
+function parseStartPayload(payload: string): { refCode?: string; utm_source?: string; utm_medium?: string; utm_campaign?: string } {
+  const out: { refCode?: string; utm_source?: string; utm_medium?: string; utm_campaign?: string } = {};
+  const cIdx = payload.indexOf("_c_");
+  const refPart = cIdx >= 0 ? payload.slice(0, cIdx) : payload;
+  const campaignPart = cIdx >= 0 ? payload.slice(cIdx + 3) : "";
+  if (refPart && /^ref_?/i.test(refPart)) {
+    const code = refPart.replace(/^ref_?/i, "").trim();
+    if (code) out.refCode = code;
+  }
+  if (campaignPart) {
+    const parts = campaignPart.split("_").filter(Boolean);
+    if (parts.length >= 2) {
+      out.utm_source = parts[0];
+      out.utm_campaign = parts.length === 2 ? parts[1] : parts[parts.length - 1];
+      if (parts.length >= 3) out.utm_medium = parts.slice(1, -1).join("_");
+    }
+  }
+  return out;
+}
+
+// ——— /start с реферальным кодом (например /start ref_ABC123) или промо (/start promo_XXXX) или кампания (/start c_facebook_summer)
 bot.command("start", async (ctx) => {
   const from = ctx.from;
   if (!from) return;
@@ -440,7 +461,8 @@ bot.command("start", async (ctx) => {
   // Определяем тип deeplink
   const isPromo = /^promo_/i.test(payload);
   const promoCode = isPromo ? payload.replace(/^promo_/i, "") : undefined;
-  const refCode = !isPromo ? payload.replace(/^ref_?/i, "") || undefined : undefined;
+  const parsed = parseStartPayload(payload);
+  const refCode = !isPromo ? (parsed.refCode ?? (payload.replace(/^ref_?/i, "").trim() || undefined)) : undefined;
 
   try {
     const config = await api.getPublicConfig();
@@ -452,6 +474,9 @@ bot.command("start", async (ctx) => {
       preferredLang: "ru",
       preferredCurrency: config?.defaultCurrency ?? "usd",
       referralCode: refCode,
+      utm_source: parsed.utm_source,
+      utm_medium: parsed.utm_medium,
+      utm_campaign: parsed.utm_campaign,
     });
 
     setToken(from.id, auth.token);

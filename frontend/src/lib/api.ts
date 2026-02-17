@@ -11,6 +11,34 @@ export interface Admin {
   email: string;
   mustChangePassword: boolean;
   role: string;
+  /** Для роли MANAGER — список разделов, к которым есть доступ. Для ADMIN не используется. */
+  allowedSections?: string[];
+}
+
+/** Разделы, которые можно выдать менеджеру (без "admins"). */
+export const MANAGER_SECTIONS = [
+  { key: "dashboard", label: "Дашборд" },
+  { key: "remna-nodes", label: "Ноды Remna" },
+  { key: "clients", label: "Клиенты" },
+  { key: "tariffs", label: "Тарифы" },
+  { key: "promo", label: "Промо-ссылки" },
+  { key: "promo-codes", label: "Промокоды" },
+  { key: "analytics", label: "Аналитика" },
+  { key: "marketing", label: "Маркетинг" },
+  { key: "sales-report", label: "Отчёты продаж" },
+  { key: "broadcast", label: "Рассылка" },
+  { key: "auto-broadcast", label: "Авто-рассылка" },
+  { key: "backup", label: "Бэкапы" },
+  { key: "settings", label: "Настройки" },
+] as const;
+
+export interface AdminListItem {
+  id: string;
+  email: string;
+  role: string;
+  allowedSections: string[];
+  mustChangePassword?: boolean;
+  createdAt?: string;
 }
 
 export interface LoginResponse {
@@ -220,6 +248,19 @@ export const api = {
     return request("/admin/settings", { token });
   },
 
+  async getAdmins(token: string): Promise<AdminListItem[]> {
+    return request("/admin/admins", { token });
+  },
+  async createManager(token: string, data: { email: string; password: string; allowedSections: string[] }): Promise<AdminListItem> {
+    return request("/admin/admins", { method: "POST", body: JSON.stringify(data), token });
+  },
+  async updateManager(token: string, id: string, data: { allowedSections?: string[]; password?: string }): Promise<AdminListItem> {
+    return request(`/admin/admins/${id}`, { method: "PATCH", body: JSON.stringify(data), token });
+  },
+  async deleteManager(token: string, id: string): Promise<{ success: boolean }> {
+    return request(`/admin/admins/${id}`, { method: "DELETE", token });
+  },
+
   /** Базовый конфиг страницы подписки для визуального редактора (subpage-*.json) */
   async getDefaultSubscriptionPageConfig(token: string): Promise<SubscriptionPageConfig | null> {
     return request("/admin/default-subscription-page-config", { token });
@@ -239,6 +280,78 @@ export const api = {
 
   async syncCreateRemnaForMissing(token: string): Promise<SyncCreateRemnaForMissingResult> {
     return request("/admin/sync/create-remna-for-missing", { method: "POST", token });
+  },
+
+  /** Количество получателей рассылки (с Telegram / с email) */
+  async broadcastRecipientsCount(token: string): Promise<{ withTelegram: number; withEmail: number }> {
+    return request("/admin/broadcast/recipients-count", { token });
+  },
+
+  /** Запустить рассылку (опционально — изображение или файл вложения). */
+  async broadcast(
+    token: string,
+    body: { channel: "telegram" | "email" | "both"; subject?: string; message: string },
+    attachment?: File | null
+  ): Promise<BroadcastResult> {
+    const form = new FormData();
+    form.append("channel", body.channel);
+    form.append("message", body.message);
+    if (body.subject != null && body.subject !== "") form.append("subject", body.subject);
+    if (attachment) form.append("attachment", attachment, attachment.name);
+    const headers = new Headers();
+    headers.set("Authorization", `Bearer ${token}`);
+    const res = await fetch(`${API_BASE}/admin/broadcast`, { method: "POST", headers, body: form });
+    const text = await res.text();
+    let data: unknown;
+    try {
+      data = text ? JSON.parse(text) : undefined;
+    } catch {
+      throw new Error(res.statusText || "Request failed");
+    }
+    if (res.status === 401 && token && tokenRefreshFn && !res.url.includes("/auth/")) {
+      const newToken = await tokenRefreshFn();
+      if (newToken) return api.broadcast(newToken, body, attachment);
+    }
+    if (!res.ok) {
+      const message = (data as { message?: string })?.message ?? res.statusText;
+      throw new Error(message);
+    }
+    return data as BroadcastResult;
+  },
+
+  /** Авто-рассылка: список правил */
+  async getAutoBroadcastRules(token: string): Promise<AutoBroadcastRule[]> {
+    return request("/admin/auto-broadcast/rules", { token });
+  },
+
+  /** Количество получателей для правила (ещё не получали) */
+  async getAutoBroadcastEligibleCount(token: string, ruleId: string): Promise<{ count: number }> {
+    return request(`/admin/auto-broadcast/rules/${ruleId}/eligible-count`, { token });
+  },
+
+  /** Создать правило авто-рассылки */
+  async createAutoBroadcastRule(token: string, data: AutoBroadcastRulePayload): Promise<AutoBroadcastRule> {
+    return request("/admin/auto-broadcast/rules", { method: "POST", body: JSON.stringify(data), token });
+  },
+
+  /** Обновить правило */
+  async updateAutoBroadcastRule(token: string, id: string, data: Partial<AutoBroadcastRulePayload>): Promise<AutoBroadcastRule> {
+    return request(`/admin/auto-broadcast/rules/${id}`, { method: "PATCH", body: JSON.stringify(data), token });
+  },
+
+  /** Удалить правило */
+  async deleteAutoBroadcastRule(token: string, id: string): Promise<void> {
+    return request(`/admin/auto-broadcast/rules/${id}`, { method: "DELETE", token });
+  },
+
+  /** Запустить все правила сейчас */
+  async runAutoBroadcastAll(token: string): Promise<{ results: RunRuleResult[] }> {
+    return request("/admin/auto-broadcast/run", { method: "POST", token });
+  },
+
+  /** Запустить одно правило сейчас */
+  async runAutoBroadcastRule(token: string, ruleId: string): Promise<RunRuleResult> {
+    return request(`/admin/auto-broadcast/run/${ruleId}`, { method: "POST", token });
   },
 
   /** Создать бэкап БД (скачать SQL) */
@@ -571,6 +684,52 @@ export interface SyncCreateRemnaForMissingResult {
   errors: string[];
 }
 
+export interface BroadcastResult {
+  ok: boolean;
+  sentTelegram: number;
+  sentEmail: number;
+  failedTelegram: number;
+  failedEmail: number;
+  errors: string[];
+}
+
+export type AutoBroadcastTriggerType =
+  | "after_registration"
+  | "inactivity"
+  | "no_payment"
+  | "trial_not_connected"
+  | "trial_used_never_paid"
+  | "no_traffic"
+  | "subscription_expired";
+
+export interface AutoBroadcastRule {
+  id: string;
+  name: string;
+  triggerType: AutoBroadcastTriggerType;
+  delayDays: number;
+  channel: "telegram" | "email" | "both";
+  subject: string | null;
+  message: string;
+  enabled: boolean;
+  sentCount?: number;
+}
+
+export interface AutoBroadcastRulePayload {
+  name: string;
+  triggerType: AutoBroadcastTriggerType;
+  delayDays: number;
+  channel: "telegram" | "email" | "both";
+  subject?: string | null;
+  message: string;
+  enabled?: boolean;
+}
+
+export interface RunRuleResult {
+  ruleId: string;
+  sent: number;
+  errors: string[];
+}
+
 export type UpdateSettingsPayload = {
   activeLanguages?: string;
   activeCurrencies?: string;
@@ -627,6 +786,9 @@ export type UpdateSettingsPayload = {
   sellOptionsDevicesProducts?: string | null;
   sellOptionsServersEnabled?: boolean;
   sellOptionsServersProducts?: string | null;
+  googleAnalyticsId?: string | null;
+  yandexMetrikaId?: string | null;
+  autoBroadcastCron?: string | null;
 };
 
 export interface ClientRecord {
@@ -733,6 +895,12 @@ export interface AdminSettings {
   sellOptionsDevicesProducts?: { id: string; name: string; deviceCount: number; price: number; currency: string }[];
   sellOptionsServersEnabled?: boolean;
   sellOptionsServersProducts?: { id: string; name: string; squadUuid: string; trafficGb?: number; price: number; currency: string }[];
+  /** Google Analytics 4 Measurement ID (G-XXXXXXXXXX) — подключается на страницах кабинета */
+  googleAnalyticsId?: string | null;
+  /** Яндекс.Метрика: номер счётчика — подключается на страницах кабинета */
+  yandexMetrikaId?: string | null;
+  /** Расписание авто-рассылки (cron, например "0 9 * * *" = 9:00 каждый день). Пусто = по умолчанию 9:00. */
+  autoBroadcastCron?: string | null;
 }
 
 /** Конфиг страницы подписки (формат как sub.stealthnet.app) */
@@ -835,6 +1003,7 @@ export interface TariffRecord {
   id: string;
   categoryId: string;
   name: string;
+  description: string | null;
   durationDays: number;
   internalSquadUuids: string[];
   trafficLimitBytes: number | null;
@@ -849,6 +1018,7 @@ export interface TariffRecord {
 export type CreateTariffPayload = {
   categoryId: string;
   name: string;
+  description?: string | null;
   durationDays: number;
   internalSquadUuids: string[];
   trafficLimitBytes?: number | null;
@@ -860,6 +1030,7 @@ export type CreateTariffPayload = {
 
 export type UpdateTariffPayload = {
   name?: string;
+  description?: string | null;
   durationDays?: number;
   internalSquadUuids?: string[];
   trafficLimitBytes?: number | null;
@@ -899,6 +1070,11 @@ export type ClientRegisterPayload = {
   preferredLang?: string;
   preferredCurrency?: string;
   referralCode?: string;
+  utm_source?: string;
+  utm_medium?: string;
+  utm_campaign?: string;
+  utm_content?: string;
+  utm_term?: string;
 };
 
 export interface ClientPayment {
@@ -916,7 +1092,7 @@ export interface PublicTariffCategory {
   name: string;
   emojiKey: string | null;
   emoji: string;
-  tariffs: { id: string; name: string; durationDays: number; price: number; currency: string; trafficLimitBytes: number | null; deviceLimit: number | null }[];
+  tariffs: { id: string; name: string; description: string | null; durationDays: number; price: number; currency: string; trafficLimitBytes: number | null; deviceLimit: number | null }[];
 }
 
 // ——— Промо-группы ———
@@ -1049,4 +1225,6 @@ export interface PublicConfig {
   themeAccent?: string;
   sellOptionsEnabled?: boolean;
   sellOptions?: PublicSellOption[];
+  googleAnalyticsId?: string | null;
+  yandexMetrikaId?: string | null;
 }
