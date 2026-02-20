@@ -31,12 +31,10 @@ const headers = {
 
 let proxyProcess = null;
 let lastSlotsSignature = null;
-// Метрики: трафик по логинам, общий трафик ноды. Собираем из stdout 3proxy и (опционально) из файла.
+// Метрики: трафик по логинам, общий трафик ноды. Собираем из файла лога 3proxy.
 let stats = { trafficIn: 0, trafficOut: 0, byLogin: {} };
 let logReadOffset = 0;
-// Буфер для парсинга stdout по строкам (3proxy может присылать кусками)
-let stdoutLineBuffer = "";
-// 3proxy logformat "L %U %I %O" → одна строка: L login bytesIn bytesOut (допускаем L без пробела)
+// 3proxy logformat "L %U %I %O" → одна строка: L login bytesIn bytesOut
 const TRAFFIC_LINE = /^L\s*(\S+)\s+(\d+)\s+(\d+)/;
 
 function slotsSignature(slots) {
@@ -54,13 +52,15 @@ function writePasswd(slots) {
 function writeConfig(slots) {
   const dir = path.dirname(CONFIG_PATH);
   if (!dir || (dir !== "." && !fs.existsSync(dir))) fs.mkdirSync(dir, { recursive: true });
-  // Лог в stdout — агент парсит его (работает в Docker без файлов). Формат: L user bytesIn bytesOut
+  const logDir = path.dirname(LOG_PATH);
+  if (logDir && logDir !== "." && !fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+  // Лог в файл (/dev/stdout в контейнере часто недоступен). Формат: L user bytesIn bytesOut
   const cfg = [
     "nserver 8.8.8.8",
     "nserver 8.8.4.4",
     "nscache 65536",
     "timeouts 1 5 30 60 180 1800 15 60",
-    "log /dev/stdout",
+    `log ${LOG_PATH}`,
     'logformat "L %U %I %O"',
     `users $${PASSWD_PATH}`,
     "auth strong",
@@ -79,33 +79,12 @@ function start3proxy() {
       proxyProcess = null;
     } catch (_) {}
   }
-  stdoutLineBuffer = "";
   const bin = "3proxy";
   proxyProcess = spawn(bin, [CONFIG_PATH], {
     stdio: ["ignore", "pipe", "pipe"],
     detached: false,
   });
-  proxyProcess.stdout?.on("data", (d) => {
-    const s = d.toString("utf8");
-    stdoutLineBuffer += s;
-    let idx;
-    while ((idx = stdoutLineBuffer.indexOf("\n")) >= 0) {
-      const line = stdoutLineBuffer.slice(0, idx).trim();
-      stdoutLineBuffer = stdoutLineBuffer.slice(idx + 1);
-      const m = line.match(TRAFFIC_LINE);
-      if (m) {
-        const login = m[1];
-        const inB = parseInt(m[2], 10) || 0;
-        const outB = parseInt(m[3], 10) || 0;
-        stats.trafficIn += inB;
-        stats.trafficOut += outB;
-        if (!stats.byLogin[login]) stats.byLogin[login] = 0;
-        stats.byLogin[login] += inB + outB;
-        if (DEBUG) process.stdout.write(`[traffic] ${login} +${inB + outB} B\n`);
-      }
-    }
-    process.stdout.write(d);
-  });
+  proxyProcess.stdout?.on("data", (d) => process.stdout.write(d));
   proxyProcess.stderr?.on("data", (d) => process.stderr.write(d));
   proxyProcess.on("error", (err) => {
     console.error("3proxy spawn error:", err.message);
