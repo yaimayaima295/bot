@@ -144,7 +144,7 @@ function buildDefaultConfig(portVal, users, tlsPaths) {
   };
 }
 
-/** Подставляет users в кастомный конфиг (инбаунд с тегом stealthnet-in). */
+/** Подставляет users в кастомный конфиг (инбаунд с тегом stealthnet-in). Для HYSTERIA2/TROJAN подставляет реальные пути к сертификатам. */
 function mergeCustomConfig(customJson, users) {
   let config;
   try {
@@ -167,6 +167,13 @@ function mergeCustomConfig(customJson, users) {
     managed.users = users.map((u) => ({ name: u.name, uuid: u.uuid }));
   } else {
     managed.users = users.map((u) => ({ name: u.name, password: u.password }));
+  }
+  if ((protocol === "HYSTERIA2" || protocol === "TROJAN") && managed.tls) {
+    const tlsPaths = ensureTlsCert();
+    if (tlsPaths) {
+      managed.tls.certificate_path = tlsPaths.certPath;
+      managed.tls.key_path = tlsPaths.keyPath;
+    }
   }
   return config;
 }
