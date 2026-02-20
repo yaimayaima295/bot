@@ -14,9 +14,10 @@ RUN curl -sL "https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_
     mv sing-box-*-linux-amd64/sing-box /build/sing-box && \
     chmod +x /build/sing-box
 
-# Stage 2: node + agent + sing-box
+# Stage 2: node + agent + sing-box (openssl для самоподписанного сертификата при HYSTERIA2/TROJAN)
 FROM node:20-alpine
 ARG SINGBOX_VERSION
+RUN apk add --no-cache openssl
 WORKDIR /app
 
 COPY --from=singbox-builder /build/sing-box /usr/local/bin/sing-box
