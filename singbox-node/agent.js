@@ -141,6 +141,7 @@ function buildDefaultConfig(portVal, users, tlsPaths) {
     log: { level: "info" },
     inbounds: [inbound],
     outbounds: [{ type: "direct", tag: "direct" }],
+    route: { final: "direct" },
   };
 }
 
@@ -177,6 +178,12 @@ function mergeCustomConfig(customJson, users) {
   }
   // Порт из админки (передан в applySlots через portFromApi) — подставляем в инбаунд
   managed.listen_port = port;
+  // Маршрут в интернет: если нет route.final — трафик из инбаунда может не идти в outbound
+  if (!config.route) config.route = {};
+  if (!config.route.final && config.outbounds?.length) {
+    const direct = config.outbounds.find((o) => o && o.tag === "direct");
+    config.route.final = direct ? "direct" : config.outbounds[0]?.tag || "direct";
+  }
   return config;
 }
 
