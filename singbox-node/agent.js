@@ -96,6 +96,9 @@ function buildDefaultConfig(portVal, users, tlsPaths) {
       listen_port: listenPort,
       users: users.map((u) => ({ name: u.name, uuid: u.uuid })),
     };
+    if (tlsEnabled && tlsPaths) {
+      inbound.tls = { enabled: true, server_name: "localhost", certificate_path: tlsPaths.certPath, key_path: tlsPaths.keyPath };
+    }
   } else if (protocol === "SHADOWSOCKS") {
     inbound = {
       type: "shadowsocks",
@@ -172,9 +175,11 @@ function mergeCustomConfig(customJson, users) {
   } else {
     managed.users = users.map((u) => ({ name: u.name, password: u.password }));
   }
-  if ((protocol === "HYSTERIA2" || protocol === "TROJAN") && managed.tls) {
+  const needsTlsCert = protocol === "HYSTERIA2" || protocol === "TROJAN" || (protocol === "VLESS" && tlsEnabled);
+  if (needsTlsCert) {
     const tlsPaths = ensureTlsCert();
     if (tlsPaths) {
+      if (!managed.tls) managed.tls = { enabled: true, server_name: "localhost" };
       managed.tls.certificate_path = tlsPaths.certPath;
       managed.tls.key_path = tlsPaths.keyPath;
     }
@@ -248,7 +253,8 @@ async function applySlots(slots, customConfigJson, protocolFromApi, portFromApi)
     if (!config) return;
   } else {
     let tlsPaths = null;
-    if (protocol === "TROJAN" || protocol === "HYSTERIA2") {
+    const needsTls = protocol === "TROJAN" || protocol === "HYSTERIA2" || (protocol === "VLESS" && tlsEnabled);
+    if (needsTls) {
       tlsPaths = ensureTlsCert();
       if (!tlsPaths) {
         console.error("TLS required for " + protocol + ". Could not generate certificate (install openssl).");
