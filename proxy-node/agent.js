@@ -43,7 +43,7 @@ const TRAFFIC_LINE = /^STN\s+(\S+)\s+(\d+)\s+(\d+)/;
 
 function slotsSignature(slots) {
   if (!slots || slots.length === 0) return "";
-  return slots.map((s) => `${s.login}:${s.password}`).join("|");
+  return slots.map((s) => `${s.login}:${s.password}:${s.connectionLimit ?? ""}`).join("|");
 }
 
 function writePasswd(slots) {
@@ -58,8 +58,8 @@ function writeConfig(slots) {
   if (!dir || (dir !== "." && !fs.existsSync(dir))) fs.mkdirSync(dir, { recursive: true });
   const logDir = path.dirname(LOG_PATH);
   if (logDir && logDir !== "." && !fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
-  // Лог в файл. "L" = local time (директива), "STN" = литеральный префикс, %U=user, %I=bytesIn, %O=bytesOut
-  const cfg = [
+
+  const lines = [
     "nserver 8.8.8.8",
     "nserver 8.8.4.4",
     "nscache 65536",
@@ -68,12 +68,24 @@ function writeConfig(slots) {
     'logformat "LSTN %U %I %O"',
     `users $${PASSWD_PATH}`,
     "auth strong",
+  ];
+
+  // Per-user connection limits: connlim N 0 user → max N simultaneous connections
+  const activeSlots = (slots || []).filter((s) => s.connectionLimit != null && s.connectionLimit > 0);
+  if (activeSlots.length > 0) {
+    for (const s of activeSlots) {
+      lines.push(`connlim ${s.connectionLimit} 0 ${s.login}`);
+    }
+  }
+
+  lines.push(
     "allow *",
     "maxconn 500",
     `socks -p${SOCKS_PORT} -i0.0.0.0`,
     `proxy -p${HTTP_PORT} -i0.0.0.0`,
-  ].join("\n");
-  fs.writeFileSync(CONFIG_PATH, cfg, "utf8");
+  );
+
+  fs.writeFileSync(CONFIG_PATH, lines.join("\n"), "utf8");
 }
 
 function start3proxy() {
