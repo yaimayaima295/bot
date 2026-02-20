@@ -1,0 +1,269 @@
+#!/usr/bin/env node
+/**
+ * Агент sing-box ноды STEALTHNET: регистрация, heartbeat, слоты → конфиг sing-box (JSON).
+ * Переменные: STEALTHNET_API_URL, SINGBOX_NODE_TOKEN, PROTOCOL, PORT, CONFIG_PATH, POLL_INTERVAL_SEC
+ */
+
+const fs = require("fs");
+const path = require("path");
+const { spawn } = require("child_process");
+
+const API_URL = (process.env.STEALTHNET_API_URL || "").replace(/\/$/, "");
+const TOKEN = process.env.SINGBOX_NODE_TOKEN || "";
+const CONFIG_PATH = process.env.CONFIG_PATH || path.join(__dirname, "config.json");
+const POLL_INTERVAL_MS = (parseInt(process.env.POLL_INTERVAL_SEC || "60", 10) || 60) * 1000;
+const MANAGED_INBOUND_TAG = "stealthnet-in";
+
+// Из API приходят: protocol, port, tlsEnabled, customConfigJson, slots[]
+let protocol = (process.env.PROTOCOL || "VLESS").toUpperCase();
+let port = parseInt(process.env.PORT || "443", 10);
+let tlsEnabled = process.env.TLS_ENABLED !== "0" && process.env.TLS_ENABLED !== "false";
+
+const headers = {
+  "Content-Type": "application/json",
+  "X-Singbox-Node-Token": TOKEN,
+};
+
+let singboxProcess = null;
+let lastSlotsSignature = null;
+
+if (!API_URL || !TOKEN) {
+  console.error("Set STEALTHNET_API_URL and SINGBOX_NODE_TOKEN");
+  process.exit(1);
+}
+
+function slotsSignature(slots) {
+  if (!slots || slots.length === 0) return "";
+  return slots.map((s) => `${s.id}:${s.userIdentifier}:${s.secret || ""}`).join("|");
+}
+
+/** Формирует массив users для sing-box из слотов в зависимости от протокола. */
+function buildUsers(slots) {
+  if (!slots || slots.length === 0) return [];
+  const list = [];
+  for (const s of slots) {
+    const name = s.userIdentifier || s.id?.slice(0, 8) || "user";
+    if (protocol === "VLESS" || protocol === "TROJAN") {
+      // VLESS: uuid в userIdentifier, пароль не обязателен
+      if (protocol === "VLESS") {
+        list.push({ name, uuid: s.userIdentifier });
+      } else {
+        list.push({ name, password: s.secret || "" });
+      }
+    } else {
+      // SHADOWSOCKS, HYSTERIA2: name + password
+      list.push({ name, password: s.secret || "" });
+    }
+  }
+  return list;
+}
+
+/** Минимальный шаблон конфига по протоколу (без customConfigJson). */
+function buildDefaultConfig(portVal, users) {
+  const listenPort = portVal || port;
+  let inbound;
+  if (protocol === "VLESS") {
+    inbound = {
+      type: "vless",
+      tag: MANAGED_INBOUND_TAG,
+      listen: "::",
+      listen_port: listenPort,
+      users: users.map((u) => ({ name: u.name, uuid: u.uuid })),
+    };
+  } else if (protocol === "SHADOWSOCKS") {
+    inbound = {
+      type: "shadowsocks",
+      tag: MANAGED_INBOUND_TAG,
+      listen: "::",
+      listen_port: listenPort,
+      method: "2022-blake3-aes-256-gcm",
+      users: users.map((u) => ({ name: u.name, password: u.password })),
+    };
+    if (inbound.users.length === 0) inbound.password = "replace-me-or-add-slots";
+  } else if (protocol === "TROJAN") {
+    inbound = {
+      type: "trojan",
+      tag: MANAGED_INBOUND_TAG,
+      listen: "::",
+      listen_port: listenPort,
+      users: users.map((u) => ({ name: u.name, password: u.password })),
+      tls: {},
+    };
+  } else if (protocol === "HYSTERIA2") {
+    inbound = {
+      type: "hysteria2",
+      tag: MANAGED_INBOUND_TAG,
+      listen: "::",
+      listen_port: listenPort,
+      users: users.map((u) => ({ name: u.name, password: u.password })),
+      tls: {},
+    };
+  } else {
+    inbound = {
+      type: "vless",
+      tag: MANAGED_INBOUND_TAG,
+      listen: "::",
+      listen_port: listenPort,
+      users: users.map((u) => ({ name: u.name, uuid: u.uuid })),
+    };
+  }
+
+  return {
+    log: { level: "info" },
+    inbounds: [inbound],
+    outbounds: [{ type: "direct", tag: "direct" }],
+  };
+}
+
+/** Подставляет users в кастомный конфиг (инбаунд с тегом stealthnet-in). */
+function mergeCustomConfig(customJson, users) {
+  let config;
+  try {
+    config = typeof customJson === "string" ? JSON.parse(customJson) : customJson;
+  } catch (e) {
+    console.error("Invalid customConfigJson:", e.message);
+    return null;
+  }
+  const inbounds = config.inbounds;
+  if (!Array.isArray(inbounds)) {
+    console.error("customConfigJson: inbounds not found or not array");
+    return null;
+  }
+  const managed = inbounds.find((i) => i && i.tag === MANAGED_INBOUND_TAG);
+  if (!managed) {
+    console.error("customConfigJson: no inbound with tag", MANAGED_INBOUND_TAG);
+    return config;
+  }
+  if (protocol === "VLESS") {
+    managed.users = users.map((u) => ({ name: u.name, uuid: u.uuid }));
+  } else {
+    managed.users = users.map((u) => ({ name: u.name, password: u.password }));
+  }
+  return config;
+}
+
+function writeConfig(config) {
+  const dir = path.dirname(CONFIG_PATH);
+  if (dir && dir !== "." && !fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), "utf8");
+}
+
+function startSingbox() {
+  if (singboxProcess) {
+    try {
+      singboxProcess.kill("SIGTERM");
+      singboxProcess = null;
+    } catch (_) {}
+  }
+  const bin = "sing-box";
+  singboxProcess = spawn(bin, ["run", "-c", CONFIG_PATH], {
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: false,
+  });
+  singboxProcess.stdout?.on("data", (d) => process.stdout.write(d));
+  singboxProcess.stderr?.on("data", (d) => process.stderr.write(d));
+  singboxProcess.on("error", (err) => {
+    console.error("sing-box spawn error:", err.message);
+  });
+  singboxProcess.on("exit", (code, sig) => {
+    if (code !== null && code !== 0) console.error("sing-box exited:", code, sig);
+    singboxProcess = null;
+  });
+  console.log("sing-box started (protocol:", protocol + ", port:", port + ")");
+}
+
+function applySlots(slots, customConfigJson, protocolFromApi, portFromApi) {
+  const sig = slotsSignature(slots);
+  if (sig === lastSlotsSignature && !customConfigJson) return;
+  lastSlotsSignature = sig;
+
+  if (protocolFromApi) protocol = protocolFromApi;
+  if (portFromApi) port = portFromApi;
+
+  const users = buildUsers(slots);
+  let config;
+  if (customConfigJson && customConfigJson.trim()) {
+    config = mergeCustomConfig(customConfigJson, users);
+    if (!config) return;
+  } else {
+    config = buildDefaultConfig(port, users);
+  }
+  writeConfig(config);
+  startSingbox();
+}
+
+async function register() {
+  const res = await fetch(`${API_URL}/api/singbox-nodes/register`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ name: "" }),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    console.error("Register failed:", res.status, text);
+    return null;
+  }
+  const data = JSON.parse(text);
+  console.log("Registered nodeId:", data.nodeId);
+  if (data.protocol) protocol = data.protocol;
+  if (data.port) port = data.port;
+  if (data.tlsEnabled !== undefined) tlsEnabled = data.tlsEnabled;
+  return data.nodeId;
+}
+
+async function getSlots(nodeId) {
+  const res = await fetch(`${API_URL}/api/singbox-nodes/${nodeId}/slots`, { headers });
+  if (!res.ok) return { slots: [], customConfigJson: null, protocol: null, port: null };
+  const data = await res.json();
+  return {
+    slots: data.slots || [],
+    customConfigJson: data.customConfigJson ?? null,
+    protocol: data.protocol ?? null,
+    port: data.port ?? null,
+  };
+}
+
+async function heartbeat(nodeId, slots) {
+  const body = {
+    connections: 0,
+    trafficIn: 0,
+    trafficOut: 0,
+    slots: (slots || []).map((s) => ({ slotId: s.id, trafficUsed: 0, connections: 0 })),
+  };
+  const res = await fetch(`${API_URL}/api/singbox-nodes/${nodeId}/heartbeat`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    console.error("Heartbeat failed:", res.status, await res.text());
+  }
+}
+
+async function main() {
+  const nodeId = await register();
+  if (!nodeId) {
+    console.error("Registration failed. Exiting.");
+    process.exit(1);
+  }
+
+  const tick = async () => {
+    const { slots, customConfigJson, protocol: apiProtocol, port: apiPort } = await getSlots(nodeId);
+    applySlots(slots, customConfigJson, apiProtocol, apiPort);
+    await heartbeat(nodeId, slots);
+    if (slots.length > 0) {
+      console.log("Slots:", slots.length, "Protocol:", protocol);
+    }
+  };
+
+  await tick();
+  setInterval(tick, POLL_INTERVAL_MS);
+  console.log("Heartbeat + config refresh every", POLL_INTERVAL_MS / 1000, "s");
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
