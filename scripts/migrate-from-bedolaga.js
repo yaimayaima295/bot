@@ -165,12 +165,23 @@ async function migrate() {
 
     // ─── Определяем системную валюту ─────────────────────────
     if (FORCE_CURRENCY) {
-      systemCurrency = FORCE_CURRENCY;
+      systemCurrency = FORCE_CURRENCY.toLowerCase();
     } else {
       const currRes = await newDb.query(
         `SELECT value FROM system_settings WHERE key = 'default_currency' LIMIT 1`
       );
-      systemCurrency = currRes.rows.length > 0 ? currRes.rows[0].value : "usd";
+      
+      // Убеждаемся, что валюта - строка, а не массив
+      const currencyValue = currRes.rows.length > 0 ? currRes.rows[0].value : "usd";
+      
+      // Если пришёл массив, берём первый элемент и приводим к нижнему регистру
+      if (Array.isArray(currencyValue)) {
+        systemCurrency = currencyValue[0].toLowerCase();
+      } else if (typeof currencyValue === 'string') {
+        systemCurrency = currencyValue.toLowerCase();
+      } else {
+        systemCurrency = "usd";
+      }
     }
     log("💱", `Системная валюта: ${systemCurrency.toUpperCase()}`);
     if (systemCurrency === "rub") {
@@ -232,15 +243,13 @@ async function migrate() {
             referralCode,
             balance,
             u.language || "ru",
-            systemCurrency,
+            systemCurrency, // строка в нижнем регистре
             u.telegram_id ? String(u.telegram_id) : null,
             u.username || null,
             u.status === "blocked",
             null,
             null,
-            u.has_had_paid_subscription === false && u.status !== "active"
-              ? false
-              : false, // trial_used — определим из subscriptions
+            false, // trial_used
             u.created_at ? new Date(u.created_at) : new Date(),
           ]
         );
@@ -280,9 +289,6 @@ async function migrate() {
           updates.push(`trial_used = $${idx++}`);
           values.push(true);
         }
-
-        // Обновляем remnawave_uuid из subscription если есть short_uuid
-        // (основной uuid уже из users, но subscription_url может быть полезен)
 
         if (updates.length > 0) {
           values.push(newClientId);
@@ -377,7 +383,7 @@ async function migrate() {
             newClientId,
             orderId,
             amount,
-            systemCurrency,
+            systemCurrency, // строка в нижнем регистре
             t.is_completed ? "PAID" : "PENDING",
             provider || null,
             t.external_id || null,
@@ -444,7 +450,7 @@ async function migrate() {
               refClientId,
               `BDL-REF-${re.id}`,
               kopeksToSystem(re.amount_kopeks),
-              systemCurrency,
+              systemCurrency, // строка в нижнем регистре
               "PAID",
               "referral",
               JSON.stringify({ bedolaga_reason: re.reason }),
@@ -514,10 +520,10 @@ async function migrate() {
       });
     }
 
-    // Из branding (app-config.json если есть)
+    // Из branding (app-config.json если есть) - ИСПРАВЛЕНО: строки, не массивы
     settingsToMigrate.push(
-      { key: "active_languages", value: '["ru","en"]' },
-      { key: "active_currencies", value: '["usd","rub"]' }
+      { key: "active_languages", value: "ru,en" },  // строка через запятую
+      { key: "active_currencies", value: "rub,usd" } // строка через запятую
     );
 
     for (const s of settingsToMigrate) {
@@ -546,6 +552,29 @@ async function migrate() {
     }
 
     log("📊", `Настройки: ${stats.settings.migrated} перенесено`);
+
+    // ─── ФИНАЛЬНАЯ ОЧИСТКА ДАННЫХ ───────────────────────────
+    logSection("Очистка данных");
+
+    try {
+      // Исправляем форматы валют и языков если они сохранились как массивы
+      await newDb.query(`
+        UPDATE system_settings 
+        SET value = 'rub,usd' 
+        WHERE key = 'active_currencies' AND (value LIKE '%[%' OR value LIKE '%"%');
+        
+        UPDATE system_settings 
+        SET value = 'ru,en' 
+        WHERE key = 'active_languages' AND (value LIKE '%[%' OR value LIKE '%"%');
+        
+        UPDATE payments 
+        SET currency = LOWER(currency) 
+        WHERE currency != LOWER(currency);
+      `);
+      log("✅", "Форматы данных исправлены");
+    } catch (err) {
+      log("⚠️", `Ошибка при очистке: ${err.message}`);
+    }
 
     // ─── ИТОГО ───────────────────────────────────────────────
     console.log(`
