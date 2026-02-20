@@ -10,8 +10,9 @@ const { spawn } = require("child_process");
 
 const API_URL = (process.env.STEALTHNET_API_URL || "").replace(/\/$/, "");
 const TOKEN = process.env.PROXY_NODE_TOKEN || "";
-const SOCKS_PORT = parseInt(process.env.SOCKS_PORT || "1080", 10);
-const HTTP_PORT = parseInt(process.env.HTTP_PORT || "8080", 10);
+// Порты: начальные из env, потом обновляются из API панели
+let socksPort = parseInt(process.env.SOCKS_PORT || "1080", 10);
+let httpPort = parseInt(process.env.HTTP_PORT || "8080", 10);
 const CONFIG_PATH = process.env.CONFIG_PATH || path.join(__dirname, "3proxy.cfg");
 const PASSWD_PATH = process.env.PASSWD_PATH || path.join(__dirname, "passwd");
 const LOG_PATH = process.env.LOG_PATH || path.join(path.dirname(CONFIG_PATH), "3proxy.log");
@@ -81,8 +82,8 @@ function writeConfig(slots) {
   lines.push(
     "allow *",
     "maxconn 500",
-    `socks -p${SOCKS_PORT} -i0.0.0.0`,
-    `proxy -p${HTTP_PORT} -i0.0.0.0`,
+    `socks -p${socksPort} -i0.0.0.0`,
+    `proxy -p${httpPort} -i0.0.0.0`,
   );
 
   fs.writeFileSync(CONFIG_PATH, lines.join("\n"), "utf8");
@@ -109,7 +110,7 @@ function start3proxy() {
     if (code !== null && code !== 0) console.error("3proxy exited:", code, sig);
     proxyProcess = null;
   });
-  console.log("3proxy started (SOCKS", SOCKS_PORT + ", HTTP", HTTP_PORT + ")");
+  console.log("3proxy started (SOCKS", socksPort + ", HTTP", httpPort + ")");
 }
 
 function applySlots(slots) {
@@ -125,7 +126,7 @@ async function register() {
   const res = await fetch(`${API_URL}/api/proxy-nodes/register`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ name: "", socksPort: SOCKS_PORT, httpPort: HTTP_PORT }),
+    body: JSON.stringify({ name: "", socksPort, httpPort }),
   });
   const text = await res.text();
   if (!res.ok) {
@@ -218,9 +219,20 @@ async function heartbeat(nodeId, slots) {
 
 async function getSlots(nodeId) {
   const res = await fetch(`${API_URL}/api/proxy-nodes/${nodeId}/slots`, { headers });
-  if (!res.ok) return [];
+  if (!res.ok) return { slots: [], portsChanged: false };
   const data = await res.json();
-  return data.slots || [];
+  let portsChanged = false;
+  if (data.socksPort && data.socksPort !== socksPort) {
+    console.log("SOCKS port changed:", socksPort, "→", data.socksPort);
+    socksPort = data.socksPort;
+    portsChanged = true;
+  }
+  if (data.httpPort && data.httpPort !== httpPort) {
+    console.log("HTTP port changed:", httpPort, "→", data.httpPort);
+    httpPort = data.httpPort;
+    portsChanged = true;
+  }
+  return { slots: data.slots || [], portsChanged };
 }
 
 async function main() {
@@ -231,7 +243,8 @@ async function main() {
   }
 
   const tick = async () => {
-    const slots = await getSlots(nodeId);
+    const { slots, portsChanged } = await getSlots(nodeId);
+    if (portsChanged) lastSlotsSignature = null; // force config rewrite
     applySlots(slots);
     await heartbeat(nodeId, slots);
     if (slots.length > 0) {
