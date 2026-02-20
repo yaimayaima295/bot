@@ -33,6 +33,9 @@ let proxyProcess = null;
 let lastSlotsSignature = null;
 // Метрики: трафик по логинам, общий трафик ноды. Собираем из файла лога 3proxy.
 let stats = { trafficIn: 0, trafficOut: 0, byLogin: {} };
+// Подключения за последний интервал (сбрасываются после heartbeat)
+let intervalConns = 0;
+let intervalConnsByLogin = {};
 let logReadOffset = 0;
 // 3proxy logformat "LSTN %U %I %O" → каждая строка: STN login bytesIn bytesOut
 // "L" — директива local time (НЕ литеральный текст!), "STN" — литеральный префикс.
@@ -155,6 +158,8 @@ function collectStatsFromLog() {
           stats.trafficOut += outB;
           if (!stats.byLogin[login]) stats.byLogin[login] = 0;
           stats.byLogin[login] += inB + outB;
+          intervalConns++;
+          intervalConnsByLogin[login] = (intervalConnsByLogin[login] || 0) + 1;
         } else if (DEBUG && totalLines <= 5) {
           console.log("[log] unmatched line:", JSON.stringify(line));
         }
@@ -175,14 +180,17 @@ async function heartbeat(nodeId, slots) {
   const slotsPayload = (slots || []).map((s) => ({
     slotId: s.id,
     trafficUsed: stats.byLogin[s.login] || 0,
-    connections: 0,
+    connections: intervalConnsByLogin[s.login] || 0,
   }));
   const body = {
-    connections: 0,
+    connections: intervalConns,
     trafficIn: stats.trafficIn,
     trafficOut: stats.trafficOut,
     slots: slotsPayload.length ? slotsPayload : undefined,
   };
+  // Сбросить счётчики подключений за интервал после отправки
+  intervalConns = 0;
+  intervalConnsByLogin = {};
   if (DEBUG) {
     console.error("[heartbeat] sending trafficIn=%s trafficOut=%s slots=%s", body.trafficIn, body.trafficOut, body.slots?.length ?? 0);
   }
