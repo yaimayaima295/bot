@@ -34,8 +34,9 @@ let lastSlotsSignature = null;
 // Метрики: трафик по логинам, общий трафик ноды. Собираем из файла лога 3proxy.
 let stats = { trafficIn: 0, trafficOut: 0, byLogin: {} };
 let logReadOffset = 0;
-// 3proxy logformat "L %U %I %O" → одна строка: L login bytesIn bytesOut
-const TRAFFIC_LINE = /^L\s*(\S+)\s+(\d+)\s+(\d+)/;
+// 3proxy logformat "LSTN %U %I %O" → каждая строка: STN login bytesIn bytesOut
+// "L" — директива local time (НЕ литеральный текст!), "STN" — литеральный префикс.
+const TRAFFIC_LINE = /^STN\s+(\S+)\s+(\d+)\s+(\d+)/;
 
 function slotsSignature(slots) {
   if (!slots || slots.length === 0) return "";
@@ -54,14 +55,14 @@ function writeConfig(slots) {
   if (!dir || (dir !== "." && !fs.existsSync(dir))) fs.mkdirSync(dir, { recursive: true });
   const logDir = path.dirname(LOG_PATH);
   if (logDir && logDir !== "." && !fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
-  // Лог в файл (/dev/stdout в контейнере часто недоступен). Формат: L user bytesIn bytesOut
+  // Лог в файл. "L" = local time (директива), "STN" = литеральный префикс, %U=user, %I=bytesIn, %O=bytesOut
   const cfg = [
     "nserver 8.8.8.8",
     "nserver 8.8.4.4",
     "nscache 65536",
     "timeouts 1 5 30 60 180 1800 15 60",
     `log ${LOG_PATH}`,
-    'logformat "L %U %I %O"',
+    'logformat "LSTN %U %I %O"',
     `users $${PASSWD_PATH}`,
     "auth strong",
     "allow *",
@@ -123,21 +124,30 @@ async function register() {
 
 function collectStatsFromLog() {
   try {
-    if (!fs.existsSync(LOG_PATH)) return;
+    if (!fs.existsSync(LOG_PATH)) {
+      if (DEBUG) console.log("[log] file not found:", LOG_PATH);
+      return;
+    }
     const size = fs.statSync(LOG_PATH).size;
-    if (size < logReadOffset) logReadOffset = 0; // ротация: новый файл
+    if (size < logReadOffset) logReadOffset = 0;
     if (logReadOffset >= size) return;
     const fd = fs.openSync(LOG_PATH, "r");
     const buf = Buffer.alloc(256 * 1024);
     let offset = logReadOffset;
     let n = 0;
+    let matched = 0;
+    let totalLines = 0;
     while ((n = fs.readSync(fd, buf, 0, buf.length, offset)) > 0) {
       offset += n;
       const chunk = buf.toString("utf8", 0, n);
       const lines = chunk.split("\n");
       for (let i = 0; i < lines.length; i++) {
-        const m = lines[i].match(TRAFFIC_LINE);
+        const line = lines[i].trim();
+        if (!line) continue;
+        totalLines++;
+        const m = line.match(TRAFFIC_LINE);
         if (m) {
+          matched++;
           const login = m[1];
           const inB = parseInt(m[2], 10) || 0;
           const outB = parseInt(m[3], 10) || 0;
@@ -145,11 +155,16 @@ function collectStatsFromLog() {
           stats.trafficOut += outB;
           if (!stats.byLogin[login]) stats.byLogin[login] = 0;
           stats.byLogin[login] += inB + outB;
+        } else if (DEBUG && totalLines <= 5) {
+          console.log("[log] unmatched line:", JSON.stringify(line));
         }
       }
     }
     fs.closeSync(fd);
     logReadOffset = offset;
+    if (DEBUG && (matched > 0 || totalLines > 0)) {
+      console.log("[log] read %d lines, matched %d, trafficIn=%d trafficOut=%d", totalLines, matched, stats.trafficIn, stats.trafficOut);
+    }
   } catch (err) {
     if (err.code !== "ENOENT") console.error("Log read error:", err.message);
   }
