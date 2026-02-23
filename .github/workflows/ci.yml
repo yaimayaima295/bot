@@ -1,0 +1,108 @@
+name: Multi-Service CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+
+jobs:
+  build-and-security:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      # -------------------------------
+      # Checkout code
+      # -------------------------------
+      - uses: actions/checkout@v4
+
+      # -------------------------------
+      # Setup Node 20
+      # -------------------------------
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # -------------------------------
+      # Установим Snyk CLI глобально
+      # -------------------------------
+      - name: Install Snyk CLI
+        run: npm install -g snyk
+
+      # -------------------------------
+      # Создаём папки для артефактов
+      # -------------------------------
+      - name: Prepare artifacts folder
+        run: |
+          mkdir -p artifacts/backend/sbom artifacts/backend/snyk-reports
+          mkdir -p artifacts/bot/sbom artifacts/bot/snyk-reports
+          mkdir -p artifacts/frontend/sbom artifacts/frontend/snyk-reports
+
+      # -------------------------------
+      # Backend
+      # -------------------------------
+      - name: Backend CI
+        run: |
+          cd backend
+          npm ci
+          npm run build || true
+          npx @cyclonedx/cyclonedx-npm --output-file ../artifacts/backend/sbom/sbom-node.json
+          docker build -t backend:ci .
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v $PWD/../artifacts/backend/sbom:/app/sbom \
+            anchore/syft:latest backend:ci -o cyclonedx-json=/app/sbom/sbom-docker.json
+          snyk test --json --all-sub-projects > ../artifacts/backend/snyk-reports/deps.json || true
+          snyk container test backend:ci --json > ../artifacts/backend/snyk-reports/container.json || true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+      # -------------------------------
+      # Bot
+      # -------------------------------
+      - name: Bot CI
+        run: |
+          cd bot
+          npm ci
+          npm run build || true
+          npx @cyclonedx/cyclonedx-npm --output-file ../artifacts/bot/sbom/sbom-node.json
+          docker build -t bot:ci .
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v $PWD/../artifacts/bot/sbom:/app/sbom \
+            anchore/syft:latest bot:ci -o cyclonedx-json=/app/sbom/sbom-docker.json
+          snyk test --json --all-sub-projects > ../artifacts/bot/snyk-reports/deps.json || true
+          snyk container test bot:ci --json > ../artifacts/bot/snyk-reports/container.json || true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+      # -------------------------------
+      # Frontend
+      # -------------------------------
+      - name: Frontend CI
+        run: |
+          cd frontend
+          npm ci
+          npm run build || true
+          npx @cyclonedx/cyclonedx-npm --output-file ../artifacts/frontend/sbom/sbom-node.json
+          docker build -t frontend:ci .
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v $PWD/../artifacts/frontend/sbom:/app/sbom \
+            anchore/syft:latest frontend:ci -o cyclonedx-json=/app/sbom/sbom-docker.json
+          snyk test --json --all-sub-projects > ../artifacts/frontend/snyk-reports/deps.json || true
+          snyk container test frontend:ci --json > ../artifacts/frontend/snyk-reports/container.json || true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+      # -------------------------------
+      # Upload all artifacts
+      # -------------------------------
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: multi-service-artifacts
+          path: artifacts/
